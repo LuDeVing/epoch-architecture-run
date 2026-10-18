@@ -1,0 +1,110 @@
+{
+ "call_id": "c87a7c80651",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Below are the twelve scratch seeds, then seven sketches for the inputs-and-outputs part (four leaps, three ports). The subtract operator is applied in the fourth leap.\n\nPASS 1 (scratch):\n1. Output rows carry direction only; a per-token log-scale and bias carry magnitude (breaks: one shared row holds norm and direction for both lookup and classification).\n2. Subtract the token's own embedding from the read-out before the head (breaks: the head reads the full state including the identity echo of the tie).\n3. Per-stream input gates plus a token-dependent softmax read-out over streams (breaks: identical broadcast in, equal mean out).\n4. Per-position log-temperature on the pre-head hidden (breaks: logits need no position-dependent scale).\n5. Temperature from disagreement across the four streams (breaks: read-out discards the variance across streams).\n6. Head reads final state minus the state at layer 6, a depth-delta head (breaks: head reads an absolute state).\n7. Rare-token rows share a hashed low-rank prototype added at lookup (breaks: every token has an independent row).\n8. Head weight is the table passed through a square learned matrix (breaks: tie means byte-identical matrices).\n9. Two softmaxes at different temperatures over the same logits, loss on their mixture (breaks: one softmax).\n10. Loss weight rising with position (breaks: uniform CE; exam is uniform, so dropped).\n11. Three of four streams get no gradient from the head (breaks: all streams are trained by the head).\n12. Only stream 0 is read at the output; the other three are hidden scratch (breaks: all streams are read).\nKept: 1, 2 and 4 as the three farthest from the brief, plus 3 as the removal-and-reinvestment leap the subtract operator requires. Subtract audit: removing the four-way broadcast loses nothing measurable because mixing starts at identity and writes go to all streams at weight about 1, so the streams begin and largely stay identical; freezing the equal mean at identity is the current design, so the mean buys nothing a learned read-out could not; removing the final RMSNorm is indefensible with residual RMS growing 7.8x; untying costs 19.3M parameters and is out. The two defensible removals are the identical broadcast and the fixed equal mean.\n\nIDEA: Direction-only tie with per-token scale and bias\nMECHANISM: Keep the shared 50304x384 table but use its RMS-normalized rows as the output classifier, multiplied by a learned per-token log-scale and plus a learned per-token bias (two vectors of 50304 scalars, zero-init). The tie currently forces one row norm to serve as input salience and as output frequency prior at once, and the 2026 tying analysis shows the output gradient wins that fight; decoupling norm from direction lets the shared direction serve both roles while rare rows (rank 10k+, 11.6 nats) keep a usable direction even when decay shrinks their norm. The conflict is intrinsic to tying and does not weaken with width, so the mechanism holds wherever a tie is kept.\nPREDICTION: Loss curve pulls below baseline within the first few hundred steps as the bias absorbs the unigram prior, and the gap persists; parameters rise by about 100k to roughly 21.34M; step time within 2 percent (one 50304x384 normalize per forward, done in bf16 to stay under the 0.1 GB memory headroom); the bias is passed through the fused linear so no second full logits tensor is created.\nTEST: Build-only for the count, 3 steps for time and peak memory, then 45 matched steps against baseline and against the bias-only variant below to isolate the normalization.\nSOURCE: own, building on https://arxiv.org/pdf/2603.26663\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The tied row's norm must encode both input salience and output frequency; this flips it so norm is output-only and lives in two cheap scalar vectors.\nKEEPS: One shared table, plain next-token cross entropy, final RMSNorm, mean read-out, the same Muon and AdamW grouping (the two new vectors fall to AdamW as 1-D parameters).\nP_SUCCESS: 0.15\nKILL: Mean training loss over matched steps 30 to 45 not at least 0.02 nats below baseline, or below the bias-only variant by less than 0.005.\n\nIDEA: Unigram bias on the tied head\nMECHANISM: Add a learned 50304-vector bias to the logits, zero-init, carried by the fused linear call. Without it the tied table has to encode token frequency inside the embedding geometry, which pollutes the input side that the same rows feed; a bias removes that burden for free and should give most of its value early, when the model is still learning the unigram and bigram statistics that dominate the first 50M tokens.\nPREDICTION: Faster early descent (first 200 steps), a small persistent gain of 0.005 to 0.015 nats; parameters +50,304; step time unchanged; no extra activation memory.\nTEST: 45 matched steps against baseline; also the control arm for the direction-only tie above.\nSOURCE: port of the classic output bias (absent in GPT-2 and in this script), motivated by https://arxiv.org/pdf/2603.26663\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Cancel the identity echo before the head\nMECHANISM: Before the final RMSNorm, subtract alpha times the token's own input embedding from the stream mean, with alpha a learned scalar initialized at 1. With a tied head, the embedding component surviving in the residual gives the current token a logit boost of its own squared norm, so the layers must spend capacity suppressing self-repetition; removing it analytically frees that capacity. The echo is a property of tying and of pre-norm residual copying, not of scale, though its share shrinks as residual RMS growth dilutes the input, so the expected gain is largest at small depth.\nPREDICTION: Lower loss from the first steps, since at init the baseline's logits favour the input token; one extra parameter; zero measurable time or memory cost (a 384-wide subtraction).\nTEST: 45 matched steps against baseline; if alpha drifts toward 0 within those steps the mechanism is dead.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The head reads the whole residual state including the copy of the current token's embedding; this reads the state minus that copy.\nKEEPS: Tied table, four streams, equal mean, final RMSNorm, plain cross entropy; the layers still see the full embedding at every depth.\nP_SUCCESS: 0.12\nKILL: Matched step 30 to 45 mean not at least 0.015 nats below baseline, or alpha below 0.3 by step 45.\n\nIDEA: Gated split-in and attentive read-out\nMECHANISM: Remove the identical four-way broadcast: stream s receives the embedding multiplied by a learned 384-vector gate (init ones, so the start is exact), letting streams carry different feature subsets from layer 0 instead of four copies that mixing near identity never separates. Remove the equal mean: read out with a per-token softmax over streams whose logits are a dot product of each normalized stream with a learned 384-vector per stream, so the head picks the stream carrying the prediction. Reinvest the freed redundancy into these roughly 3k parameters. V4-scale mHC inherits the same identical broadcast, so the symmetry break is scale-free and nearly free in parameters.\nPREDICTION: Loss curve separates from baseline only after a few hundred steps, once gates and write weights have diverged; parameters +3,072; step time within 1 percent; at the end the four streams measurably differ (cosine between streams below 0.95), which is the mechanism's signature.\nTEST: 3 steps for time, 45 matched steps for loss; log the mean pairwise cosine between the final streams at step 45.\nSOURCE: own\nTARGET: residual RMS growth, down, since streams can specialize instead of accumulating four copies\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: All four streams must start as the same embedding and be read by an equal-weight mean.\nKEEPS: Tied table, final RMSNorm, cross entropy, every Block unchanged, the stream count of 4.\nP_SUCCESS: 0.1\nKILL: Matched step 30 to 45 mean not below baseline by at least 0.01, or final-stream pairwise cosine still above 0.99 at step 45 (streams never separated).\n\nIDEA: Per-position log-temperature on the pre-head hidden\nMECHANISM: Multiply the normed read-out by exp(tau[pos]) with tau a learned 1024-vector initialized at zero, which scales that token's logits uniformly without touching the 412 MB logits tensor. Confidence should grow with available context, and today the layers must encode that growth inside features whose norm the final RMSNorm then erases; a per-position scale restores the degree of freedom at a cost of 1024 scalars. The effect exists at every scale but large models can learn it internally, so the gain is expected to shrink with capacity.\nPREDICTION: Learned tau rises monotonically with position; loss at positions beyond 512 improves more than loss at early positions; parameters +1,024; no time or memory change.\nTEST: 45 matched steps against baseline, plus a one-time per-position loss profile at the end of the smoke run.\nSOURCE: own\nTARGET: loss at late positions, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Logits need no position-dependent scale once the hidden state is RMS-normalized.\nKEEPS: Tied table, equal mean, cross entropy, rotary positions and every block unchanged.\nP_SUCCESS: 0.08\nKILL: Matched step 30 to 45 mean not at least 0.01 nats below baseline, or tau flat (range below 0.05) at step 45.\n\nIDEA: Input-side gradient amplification on the tied table\nMECHANISM: At lookup, use e plus (k minus 1) times (e minus e.detach()), identical forward values but a k-fold gradient on the input path of the shared rows. The tying analysis shows output gradients dominate and leave the table output-shaped; amplifying the input side rebalances the two roles without a second matrix or any optimizer change. This tests the brief's open item directly.\nPREDICTION: Faster descent in the first 300 steps where early-layer features matter most; no parameter, time or memory change; too large a k destabilizes AdamW on the table, so a sweep is needed.\nTEST: 45 matched steps at k in {2, 4, 8}; pick the best and confirm it holds at 300 steps.\nSOURCE: https://arxiv.org/pdf/2603.26663\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Low-rank untied correction fused into the head\nMECHANISM: Head weight becomes the shared table plus A times B with rank 32 (A is 50304x32, B is 32x384, B zero-init), computed as one fused matmul over the concatenated features so no second full logits tensor is allocated. This gives the output side its own cheap degrees of freedom, letting the shared rows move back toward input-shaped geometry, and probes the open question of a low-rank untie at a budget where full untying is forbidden. At scale this is the affordable direction, since full untying grows with vocabulary while the correction grows with rank.\nPREDICTION: Parameters +1,622,016 to about 22.86M, under the 23.37M cap; step time +3 to 4 percent; peak memory +50 MB for the rank-32 factor and its optimizer state; loss gain, if any, appears after the first thousand steps as B grows from zero.\nTEST: Build-only count, 3 steps for time and memory (the fused form is the pass or fail here), 45 matched steps for an early read, then a 300-step check since the effect is late.\nSOURCE: https://github.com/KellerJordan/modded-nanogpt and https://arxiv.org/pdf/2603.26663\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: port",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 16230,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20865,
+  "total_tokens": 40524
+ },
+ "cost_usd": 1.721215,
+ "duration_ms": 252503,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 40524,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "scissors",
+  "note": "Inputs and outputs: tied embedding, stream read-out, logits / inward / research",
+  "node": "io_embed_head",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 48249,
+ "raw": {
+  "duration_api_ms": 250677,
+  "stop_reason": "end_turn",
+  "session_id": "fb2fab4a-61c5-4850-8926-ec84b8f51091",
+  "total_cost_usd": 1.22967675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20865,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 16230,
+   "output_tokens_details": {
+    "thinking_tokens": 12045
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20865,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 16230,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20865,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20865
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 16230,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20865,
+    "webSearchRequests": 0,
+    "costUSD": 1.22967675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 12045,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 250888,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 16230,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20865,
+    "total_tokens": 40524
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 16230,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20865,
+    "total_tokens": 40524
+   },
+   "source": "usage"
+  }
+ }
+}

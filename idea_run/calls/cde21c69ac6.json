@@ -1,0 +1,108 @@
+{
+ "call_id": "cde21c69ac6",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- The gate does not touch the real bottleneck. Every head's K and V is still `expand(·)`, a fixed 128-dim column subspace of the 768-dim K/V space. Multiplying the latent by `silu(gate(x))` before `latent_norm` only re-weights coordinates inside that same subspace. Any per-token K/V direction the gated model can produce, the ungated model could already produce with a different `compress(x)`. The only new capacity is that the map from x into the subspace becomes quadratic, and the preceding 11 SwiGLU MLPs already write such features into the residual. The cheapest check is the rank of the stacked (T·B, 768) K matrices, gated vs ungated, at step 45: if both sit at 128, the \"wasted latent\" premise is false. The gated-expansion variant, `expand(c)*silu(gate(c))`, is the version that actually leaves the subspace. It costs about 98k params per layer (+5.6% total) and still fits the cap. | severity: high | class: interaction_cancels | if_true: long_z below 2.33 | link: L2\n- K and V share one gated latent. When the gate saturates a channel off for a token, both its key and its value lose that channel. Conditional selection that helps matching therefore deletes value content, and vice versa. Muon grows the gate weights quickly: an orthogonalized update with spectral norm 0.02 per step over about 1525 steps pushes the `gate(x)` std from 0.4 at init to O(1–3). That moves silu into its ReLU-like regime, where roughly half the latent channels are zeroed per token. The latent's effective width falls toward about 64. L1's \"top-16 energy share up\" would then read as success while actually being lost capacity. Check the fraction of `silu(gate(x)) < 0.05` per layer at the end of the run; if it is above 30%, capacity is being destroyed. | severity: high | class: interaction_cancels | if_true: long_z below 0 | link: L1\n- The realistic effect size is below the exam bar. Gated or nonlinear K/V variants at this scale typically move loss by about 0.002–0.006 nats. C7 requires more than 0.005 nats plus one-sided Welch p<0.01 with 3 seeds. With 3 vs pooled seeds and a seed std of about 0.003–0.006 at 50M tokens, that implies roughly a 0.012+ nat true gain. The 0.01 prediction comes from no measurement. | severity: high | class: below_noise | if_true: long_z below 2.33 | link: L5\n- C7 compares against the pooled nano-GPT2 baseline, not against the current MLA + 4-stream script. The current script already swaps full MHA for a 128-dim latent and a single shared 32-dim rotary key broadcast to all heads, and pays for it with d_ff=1077. Its nonembed count (≈21.24M) is matched to the baseline, so any gap it has to the baseline is architectural. If that gap is positive (worse), even a real 0.005-nat gate gain only narrows it. Check whether the current script, without the gate, is at or below the pooled baseline mean over 3 seeds before attributing anything to the gate. | severity: medium | class: interaction_cancels | if_true: long_z below 0 | link: L5\n- At std-0.02 init, `gate(x)` has std ≈ 0.02·√384 ≈ 0.39 and silu(z) ≈ z/2. The latent therefore starts as a purely bilinear product of two random projections with no linear term. The baseline's clean linear K/V code, which early previous-token and induction heads need, is gone. The model must first learn to drive the gate positive to recover a linear path. The likely result is a slower first 100–300 steps, which the KILL rule (steps 40–45, threshold 0.01) will either punish wrongly or miss in per-step noise. A `1 + tanh`/`2·sigmoid` gate starting at identity would avoid this, but that is a different idea. | severity: medium | class: early_only | if_true: learn_z below -1 | link: L3\n- Recall-token gains are routed through the wrong path. Copying a bigram seen earlier in the window needs a previous-token head plus an induction head. That is position-driven, and position lives entirely in the shared rotary key `kr = rotary(x)` (32 dims, one head, ungated). The late-minus-early gap of +0.459 at step 100 (late positions worse) says context use is limited by positional and induction formation, not by latent content coding. The gate leaves `kr` untouched. | severity: medium | class: interaction_cancels | if_true: long_z below 1 | link: L2\n- The rare-token target is metric-blind. Rare-token loss at step 100 (11.613) is above uniform (ln 50304 ≈ 10.83). It is governed by the tied embedding/head pushing down unseen-token logits, which gets about 12% of gradient mass, not by K/V coding. Any change there will come from the head and drift between seeds, not from the gate. The rare-token band is also 12% of the exam's tokens, so even a −0.03 gain there contributes ≈0.004 nats overall. | severity: medium | class: metric_blind | if_true: none | link: L4\n- Any early edge washes out. Per-token feature selection is exactly what the MLPs in layers 0..i−1 learn to supply to layer i's residual read within a few hundred steps. Whatever advantage the gate gives while the MLPs are immature shrinks over training, and the 30% linear cooldown (which favours the better-conditioned linear path) erases it further. A 45-step smoke win is therefore no evidence for the 50M-token exam. | severity: medium | class: early_only | if_true: trend below 0 | link: L5\n- Possible implementation slip: zero-init or near-zero-init of `gate` to \"start close to the old model\". silu(0)=0, so the latent is ≈0, and `latent_norm` with eps=1e-6 amplifies it by up to 1000×. The result is K/V noise and exploding latent-norm gradients in the first steps, after which `grad_clip=1.0` throttles the AdamW parameters. Another slip is putting the gate after `latent_norm`, which leaves V's per-token scale un-normalized and reintroduces magnitude drift into the 4-stream residual. | severity: medium | class: impl_slip | if_true: fidelity below 0.8\n- Possible implementation slip: adding the gate behind a new Config flag (for example `latent_gate=False`) that is toggled via the CLI. The harness rebuilds `GPT(cfg)` for the exam. If it uses defaults, or loads with `strict=False`, the gate weights are silently dropped or the load fails, and the exam scores an ungated network whose `compress` was trained against a gate. The gate should be unconditional in `Attention.__init__`, and loading should be verified from `model.pt` with `strict=True`. | severity: medium | class: impl_slip | if_true: fidelity below 0.9\n- The multiplicative path increases gradient variance where it is already anomalous. Layer-0 attention gradient is 0.29, 7σ above its neighbours on 3 seeds. With `c⊙silu(g)`, the gradient into each factor is scaled by the other factor, so layer 0 receives a noisier, heavier-tailed signal. Muon's normalization hides the magnitude but not the noisier direction, so the layer-0 latent may learn worse than the linear one. Check the layer-0 cosine between consecutive-step gate and compress updates. | severity: low | class: interaction_cancels | if_true: learn_z below 0 | link: L3\n- Parameter, memory and time costs are small, and they cut against the comparison. The gate adds +0.59M (≈+2.8%, within C3). Compute grows by about 1–3%, and activations by three extra (B,T,128) bf16 tensors per layer, about 40 MB, which is negligible next to the 4× stream residual. Because the gated model carries extra parameters, a null result cannot be blamed on starvation. Spending the same 0.59M on d_ff (about +26 per layer) would be a stronger control than the ungated script. | severity: low | class: hidden_cost | if_true: step_ratio above 1.05\n- Scale mismatch. Nonlinear or gated K/V code pays off when the KV latent is compressed hard relative to a wide model, for example a 512 latent vs 7168 d_model in DeepSeek. Here the latent is 128 vs d_model 384 (3:1), and per-head K/V is only 64 wide. The linear latent is close to non-binding at this size, so the mechanism's motivating regime is absent. | severity: medium | class: scale_only | if_true: long_z below 2.33\n\nVERDICT: Gating the latent before `latent_norm` leaves every head's K/V confined to the same 128-dim column space of `expand`, and couples K and V to one shared on/off pattern. The upstream MLPs already supply the nonlinear features it adds. The realistic gain is therefore a few thousandths of a nat, below the 0.005 + p<0.01 bar, and if Muon drives the gate into its ReLU-like regime it can turn negative by halving the latent's effective width.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 9042,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12652,
+  "total_tokens": 23264
+ },
+ "cost_usd": 0.917757,
+ "duration_ms": 100219,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 23264,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "attn_latent_kv-in-k01",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Gated nonlinear KV path (latent or expansion)'",
+  "node": "attn_latent_kv"
+ },
+ "prompt_chars": 28578,
+ "raw": {
+  "duration_api_ms": 98830,
+  "stop_reason": "end_turn",
+  "session_id": "3380ff0a-8554-489d-bf7e-c08147860d6c",
+  "total_cost_usd": 0.2823776,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12652,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 9042,
+   "output_tokens_details": {
+    "thinking_tokens": 5944
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12652,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 9042,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12652,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12652
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 9042,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12652,
+    "webSearchRequests": 0,
+    "costUSD": 0.2823776,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 5944,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 98936,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 9042,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12652,
+    "total_tokens": 23264
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 9042,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12652,
+    "total_tokens": 23264
+   },
+   "source": "usage"
+  }
+ }
+}

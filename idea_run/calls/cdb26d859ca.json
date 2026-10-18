@@ -1,0 +1,108 @@
+{
+ "call_id": "cdb26d859ca",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- The idea's own L6 prediction (final within −0.01 to +0.01) cannot pass C7. Clearing \"beats the pooled mean by >0.005 at p<0.01, one-sided Welch, 3 seeds\" needs a true effect of roughly 2–3x the per-seed std of exam loss. Removing 12.6k of 21.24M non-embedding params (0.06%) sits deep inside seed noise at 1525 steps. Cheapest check: the seed-to-seed std of baseline exam loss; if it is ≥0.004, no effect inside the predicted band can pass. | severity: high | class: below_noise | if_true: long_z below 2.33 | link: L6\n- \"Temperatures no longer fighting decay channel by channel\" has no mechanism here. A scalar in AdamW (wd 0.1, lr 3e-3, so 3e-4/step shrink) feels exactly the same decoupled decay as each gain channel. Adam's per-element normalization also gives a scalar the same ~lr-sized step as one channel did, so the decay/gradient equilibrium is unchanged. Each baseline gain channel can move ~0.25 in the first 100 steps against 3e-4/step decay, so the gains were never decay-limited. Over the run the total decay is about exp(−0.39)≈0.68 and is easily outpaced. Check: final mean of baseline n1/n2 gains; if it is ≥0.9, decay was not binding. | severity: high | class: interaction_cancels | if_true: long_z below 1.0 | link: L4\n- The 1.4x attention temperature only helps early. The baseline's q_norm/k_norm gains are AdamW-trained at lr 3e-3. They reach a product of ~1.4 within ~100–150 of the 1525 steps, and the cooldown (last 30%) dominates final loss. Any head start is gone by mid-run. Check: the paired loss-difference curve; its advantage at step 100 should shrink to 0 by step ~400. | severity: high | class: early_only | if_true: trend below 0 | link: L2\n- The content temperature is not what sets attention sharpness. With RMS-normalized qc and k (unit gains, 64 dims) and SDPA scaling by 1/sqrt(96) (q's last dim is hd+rd=96), the max content logit is about 64/9.8≈6.5. Even with gains grown ~1.25 each by step 100 it is about 10. The measured max logits of 15–22.75 must therefore come largely from the unnormalized rotary path: qr from wq and kr from `self.rotary`, both fed by n1. A q_norm scalar of 1.4 leaves that path untouched, so entropy at layers 3–11 barely moves. Check: split the logit into content and rotary contributions at step 100. | severity: medium | class: interaction_cancels | if_true: learn_z below 1.0 | link: L2\n- Most converted norms are redundant with downstream Muon matrices or sit before scale-invariant ops. latent_norm's gain is followed by `expand`, whose output k goes through k_norm again. n1's output passes through wq→q_norm and compress→latent_norm, which discard its scale; only qr/kr see it. n2's scale is set in practice by the norms of w_gate/w_up, which Muon's fixed-size updates and wd (0.002/step) pin to an equilibrium. The scalars therefore have almost no lever, and the claim that these temperatures are \"the only scales Muon can't set\" fails for every norm except the final one and qk. | severity: medium | class: interaction_cancels | if_true: long_z below 1.0 | link: L4\n- Removing the final-norm gain vector under tied embeddings removes the only per-dimension decoupling between input lookup and output scoring. Modded-nanogpt drops gains with an untied lm_head, so its evidence does not transfer. The cost accumulates in the rare buckets (rank 1000+, 38% of tokens, losses 8.98/11.61), which keep improving all run. At step 100 it may be invisible, then emerge late and offset any gain. Check: the rank-1000+ bucket loss at the end of a paired 500-step run. | severity: medium | class: early_only | if_true: long_z below 0 | link: L3\n- Implementation slip that silently changes the optimizer. `build_optimizers` routes every `ndim==2` parameter not named tok/head to Muon; this already catches read_logits and write_logits (shape 2x4). If the builder stores the scalar as shape (1,1) for broadcasting, it lands in Muon. Newton–Schulz on a 1x1 matrix returns roughly ±0.7–1.1, so the scalar takes about ±0.02-per-step sign steps plus 0.002/step decay. That is a jittering temperature, not a learned one. Shape () or (1,) goes to AdamW as intended. Check: print which optimizer owns each new parameter. | severity: medium | class: impl_slip | if_true: fidelity below 1\n- Implementation slip that doubles the temperature. Initializing \"q·k at 1.4x\" by setting 1.4 on both q_norm and k_norm gives 1.96x. Placing it on n1 instead does nothing to the content logits, because q_norm renormalizes, but scales qr·kr by 1.96x. Either way, early attention is much sharper than intended at Muon lr 0.02, which can collapse entropy in layers 6–9 (already 0.67–0.70) and hurt the early curve. Check the step-0 max logit against the baseline; it should be about 1.4x on the content part only. | severity: medium | class: impl_slip | if_true: learn_z below -1.0 | link: L2\n- The parameter delta doesn't match any consistent set of norms. Per block, n1+n2+latent+q+k = 1024 gain params; with the final norm the total is 12,672. Converting all 61 gives −12,611, and n1/n2/final only (25) gives −9,575. Neither equals the stated −9,560, which implies 40 scalars, a set no partition of the norms yields cleanly. So the builder will convert an ambiguous subset, likely leaving q/k or latent gains in place, and the run will test a different idea. Check: `--build-only` delta. | severity: low | class: impl_slip | if_true: fidelity below 1 | link: L1\n- The stated TARGET (update-norm spread) is blind to this change. ||dw||/||w|| spread (0.020 median / 0.033 max) is dominated by Muon matrices, whose update size NS fixes. 1-D gains barely enter it, so the chosen metric cannot register success; L5 itself predicts a null. | severity: low | class: metric_blind | if_true: none | link: L5\n- Grad-clip interaction. A scalar's gradient is the sum of its channels' gradients, so for a coherent temperature signal its norm is up to ~sqrt(384)≈20x the gain vector's. That raises the global norm and triggers clip=1.0 more often. Muon (NS-normalized) and Adam (eps 1e-10) are almost scale-invariant per step, so clipping mostly just reweights steps inside the momentum buffers. This adds noise rather than benefit. Check: fraction of steps clipped vs baseline. | severity: low | class: hidden_cost | if_true: learn_z below 0\n- Hidden costs are trivial. The extra multiply per norm (or `F.rms_norm(x, ..., None) * s`) adds no measurable step time or VRAM, so the change also cannot be \"paid for\" by reinvesting a saving elsewhere. | severity: low | class: hidden_cost | if_true: step_ratio above 1.02\n\nVERDICT: The scalars sit in the same AdamW decay regime the gains did, the 1.4x temperature head start is erased within ~150 of 1525 steps, and the rotary path, not the normalized content path, sets attention sharpness. The net effect at the exam is within ±0.005, far below what 3 seeds at p<0.01 can resolve.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 8446,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12756,
+  "total_tokens": 22772
+ },
+ "cost_usd": 0.875007,
+ "duration_ms": 91958,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 22772,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "depth_norm_init-in-k05",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'No-affine norms with scalar temperature'",
+  "node": "depth_norm_init"
+ },
+ "prompt_chars": 28851,
+ "raw": {
+  "duration_api_ms": 90576,
+  "stop_reason": "end_turn",
+  "session_id": "21f4d00e-bddc-477a-b683-24f2e309ea25",
+  "total_cost_usd": 0.2712896,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12756,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 8446,
+   "output_tokens_details": {
+    "thinking_tokens": 5744
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12756,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 8446,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12756,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12756
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 8446,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12756,
+    "webSearchRequests": 0,
+    "costUSD": 0.2712896,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 5744,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 90681,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 8446,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12756,
+    "total_tokens": 22772
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 8446,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12756,
+    "total_tokens": 22772
+   },
+   "source": "usage"
+  }
+ }
+}

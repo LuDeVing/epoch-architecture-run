@@ -1,0 +1,120 @@
+{
+ "call_id": "c852057aa99",
+ "role": "research",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n{\n  \"known\": [\n    {\n      \"name\": \"mHC (manifold-constrained hyper-connections)\",\n      \"mechanism\": \"Projects the HC residual mixing matrix onto doubly stochastic matrices (Birkhoff polytope) with Sinkhorn-Knopp, 20 iterations by default, and keeps the pre and post maps non-negative, to restore identity-mapping stability.\",\n      \"effect\": \"The authors report better stability and scaling than unconstrained HC at negligible overhead, using fused kernels, recomputation and DualPipe overlap. I could not read the ablation numbers: only the abstract and secondary summaries were readable.\",\n      \"where\": \"DeepSeek large-scale MoE models; expansion rate 4\",\n      \"url\": \"https://arxiv.org/abs/2512.24880\"\n    },\n    {\n      \"name\": \"Hyper-Connections (static vs dynamic)\",\n      \"mechanism\": \"Replaces the residual with n parallel streams and learned depth and width connection weights, either static (SHC) or token-dependent (DHC).\",\n      \"effect\": \"At expansion rate 2, SHC and DHC give similar gains. At rate 4, DHC is clearly better: OLMo-1B V2 eval loss is 2.781 for dynamic ×4 against 2.791 for static ×4. At n=1, DHC is worse than the baseline.\",\n      \"where\": \"OLMo-1B and MoE models, expansion rates 1, 2 and 4\",\n      \"url\": \"https://arxiv.org/pdf/2409.19606\"\n    },\n    {\n      \"name\": \"Frac-Connections\",\n      \"mechanism\": \"Splits the hidden state into fractions instead of replicating it, which gives HC-like multi-stream mixing with less memory.\",\n      \"effect\": \"The dynamic variant (DFC×4) beats the static one (SFC×4), the same pattern as in HC.\",\n      \"where\": \"Large language models, OLMo-style setup\",\n      \"url\": \"https://arxiv.org/pdf/2503.14125\"\n    },\n    {\n      \"name\": \"MUDDFormer (multiway dynamic dense connections)\",\n      \"mechanism\": \"Computes dense cross-layer connection weights dynamically per position, with separate streams for Q, K, V and the residual.\",\n      \"effect\": \"An ablation on a 405M model shows that static, dynamic and multiway dense connections each contribute to performance.\",\n      \"where\": \"Models up to about 405M and larger\",\n      \"url\": \"https://arxiv.org/pdf/2502.12170\"\n    },\n    {\n      \"name\": \"mHC-lite\",\n      \"mechanism\": \"Builds exactly doubly stochastic matrices as convex combinations of permutation matrices (Birkhoff–von Neumann), so no Sinkhorn iterations are needed.\",\n      \"effect\": \"Matches or exceeds mHC, has higher throughput with a naive implementation, and removes the instabilities seen in HC and mHC. The authors argue finite Sinkhorn leaves approximation error that accumulates with depth.\",\n      \"where\": \"Small and medium language models. The abstract gave no numbers.\",\n      \"url\": \"https://arxiv.org/abs/2601.05732\"\n    },\n    {\n      \"name\": \"sHC (Spectral-Sphere-Constrained Hyper-Connections)\",\n      \"mechanism\": \"Replaces the Birkhoff polytope with a spectral-norm sphere, which allows negative entries and avoids Sinkhorn.\",\n      \"effect\": \"The authors say mHC matrices collapse toward identity, and that non-negativity blocks subtractive mixing. In the appendix, composite column sums are 1.00 across depth for sHC, against 0.11 to 3.11 for mHC.\",\n      \"where\": \"Language models. I did not see the benchmark numbers.\",\n      \"url\": \"https://arxiv.org/pdf/2603.20896\"\n    },\n    {\n      \"name\": \"Stream collapse analysis and symmetry-breaking initialization\",\n      \"mechanism\": \"Breaks symmetry among streams at initialization (the LSS variant) to stop one stream from dominating the write operator and norm growth.\",\n      \"effect\": \"After an early phase the mixing matrix stays near identity and one stream's norm dominates in deep layers. Symmetry-breaking init reduces the imbalance and improves results across mHC variants.\",\n      \"where\": \"mHC-lite baseline; details not read\",\n      \"url\": \"https://arxiv.org/pdf/2606.03483\"\n    },\n    {\n      \"name\": \"Small nanoGPT-scale mHC variants (go-mHC, TBP-mHC)\",\n      \"mechanism\": \"Alternative parameterizations of the doubly stochastic mixing: generalized orthostochastic matrices (go-mHC) and transportation polytopes (TBP-mHC).\",\n      \"effect\": \"go-mHC, mHC-lite and KromHC perform about the same on a 30M, 6-layer nanoGPT, so the result is parity and not an advantage. TBP-mHC was tested at 6 layers × 512 and 12 layers × 768 on OpenWebText for 10k iterations, with KromHC runs excluded for gradient instability.\",\n      \"where\": \"30M nanoGPT on TinyStories; OpenWebText at 6×512 and 12×768\",\n      \"url\": \"https://arxiv.org/pdf/2604.02309\"\n    },\n    {\n      \"name\": \"modded-nanogpt skip, value-embedding and U-net residual shortcuts\",\n      \"mechanism\": \"Adds learned-scale skip connections from the embedding to each block, U-net-pattern layer skips, and value embeddings mixed into attention values, with gating on later versions.\",\n      \"effect\": \"In the speedrun log, value and embedding skips arrived at 8.2 min, U-net skips at 7.2 min, and U-net value embeddings at 3.95 min. The README also notes that the residual stream decays exponentially.\",\n      \"where\": \"GPT-2 small (124M) speedrun\",\n      \"url\": \"https://github.com/kellerjordan/modded-nanogpt\"\n    }\n  ],\n  \"failed\": [\n    {\n      \"name\": \"Dynamic HC at expansion rate 1\",\n      \"why\": \"DHC with n=1 is worse than the baseline. Gains only appear for n>1, and dynamic beats static mainly at n=4.\",\n      \"url\": \"https://arxiv.org/pdf/2409.19606\"\n    },\n    {\n      \"name\": \"Birkhoff-constrained mixing staying at identity\",\n      \"why\": \"Learned mHC matrices drift back toward identity, which gives little cross-stream exchange. Non-negativity blocks subtractive mixing, and finite Sinkhorn is only approximately doubly stochastic, with composite column sums from 0.11 to 3.11 across depth.\",\n      \"url\": \"https://arxiv.org/pdf/2603.20896\"\n    },\n    {\n      \"name\": \"Fancier doubly stochastic parameterizations at tiny scale\",\n      \"why\": \"go-mHC, mHC-lite and KromHC show only parity on a 30M nanoGPT, so a better parameterization of the mixing alone did not help at small scale. The authors cite limited compute.\",\n      \"url\": \"https://arxiv.org/pdf/2604.02309\"\n    }\n  ],\n  \"open\": [\n    {\n      \"direction\": \"Symmetry-breaking stream initialization instead of identical copies, to prevent one stream from dominating\",\n      \"why\": \"The stream-collapse paper shows that identical streams with near-identity mixing become a single dominant stream. Whether this holds at 21M and 50M tokens is untested.\",\n      \"url\": \"https://arxiv.org/pdf/2606.03483\"\n    },\n    {\n      \"direction\": \"Mixing matrices that allow negative entries (spectral-sphere or orthogonal, for example SO(4) via quaternions) in place of Sinkhorn\",\n      \"why\": \"This removes the non-negativity limit and the Sinkhorn cost, and gives exact norm control. It has not been compared with mHC at small scale.\",\n      \"url\": \"https://arxiv.org/pdf/2609.02672\"\n    },\n    {\n      \"direction\": \"Full-expressivity polytope parameterizations (transportation polytopes) of the mixing\",\n      \"why\": \"Standard mHC cannot represent every useful mixing. A cheaper exact parameterization might replace 20 Sinkhorn iterations at no loss.\",\n      \"url\": \"https://arxiv.org/pdf/2605.21724\"\n    },\n    {\n      \"direction\": \"Token-dependent read and write weights at expansion rate 4, with static doubly stochastic residual mixing kept\",\n      \"why\": \"Dynamic weights beat static ones at n=4 in HC and MUDD, but the combination with a constrained mixing matrix has not been tested at small scale.\",\n      \"url\": \"https://arxiv.org/pdf/2502.12170\"\n    },\n    {\n      \"direction\": \"Gated embedding and value-embedding skips combined with multi-stream mixing\",\n      \"why\": \"The speedrun gains from embedding skips, U-net skips and gated value embeddings were found with a single stream. Their interaction with multi-stream mixing is unexplored.\",\n      \"url\": \"https://github.com/kellerjordan/modded-nanogpt\"\n    }\n  ],\n  \"queries\": [\n    \"mHC manifold-constrained hyper-connections Sinkhorn doubly stochastic residual streams\",\n    \"hyper-connections dynamic vs static residual mixing ablation language model\",\n    \"modded-nanogpt speedrun value embeddings skip connections residual stream record log\",\n    \"Analyzing Stream Collapse in Hyper-Connections diagnosis mitigation\",\n    \"Spectral-Sphere-Constrained Hyper-Connections arXiv 2026\",\n    \"mHC hyper-connections small scale reproduction nanoGPT results negative OR no gain 2026\"\n  ]\n}\n```",
+ "usage": {
+  "input_tokens": 162047,
+  "output_tokens": 13221,
+  "cache_read_input_tokens": 30248,
+  "cache_creation_input_tokens": 11522,
+  "total_tokens": 217038
+ },
+ "cost_usd": 0.736738,
+ "duration_ms": 51915,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 4000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 217038,
+ "over_cap": true,
+ "meta": {
+  "card": "research",
+  "operator": "depth_stream_mix",
+  "note": "web search: State across depth: four-stream Sinkhorn residual mixing"
+ },
+ "prompt_chars": 3399,
+ "raw": {
+  "duration_api_ms": 88366,
+  "stop_reason": "end_turn",
+  "session_id": "f2269007-da8e-44f7-b3a6-053e3ee211b0",
+  "total_cost_usd": 0.1742372,
+  "usage": {
+   "input_tokens": 8,
+   "cache_creation_input_tokens": 11522,
+   "cache_read_input_tokens": 30248,
+   "output_tokens": 4452,
+   "output_tokens_details": {
+    "thinking_tokens": 91
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 11522,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 3334,
+     "cache_read_input_tokens": 13753,
+     "cache_creation_input_tokens": 630,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 630
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 8,
+    "outputTokens": 4452,
+    "cacheReadInputTokens": 30248,
+    "cacheCreationInputTokens": 11522,
+    "webSearchRequests": 0,
+    "costUSD": 0.0936488,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 91,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   },
+   "claude-haiku-5-5": {
+    "inputTokens": 162039,
+    "outputTokens": 8769,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 6,
+    "costUSD": 0.0805884,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 3093,
+    "canonicalModel": "claude-haiku-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 10,
+  "duration_ms": 50711,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 4452,
+    "cache_read_input_tokens": 30248,
+    "cache_creation_input_tokens": 11522,
+    "total_tokens": 46230
+   },
+   "model_usage_sum": {
+    "input_tokens": 162047,
+    "output_tokens": 13221,
+    "cache_read_input_tokens": 30248,
+    "cache_creation_input_tokens": 11522,
+    "total_tokens": 217038
+   },
+   "source": "modelUsage"
+  }
+ }
+}

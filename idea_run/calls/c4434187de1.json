@@ -1,0 +1,105 @@
+{
+ "call_id": "c4434187de1",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"name\":\"Embedding input norm\",\"members\":[\"s4e7c7db5f2\"]},\n{\"name\":\"QK-norm gain init above 1\",\"members\":[\"s947cf0f791\"]},\n{\"name\":\"Final-norm gain zero init\",\"members\":[\"scb6b27cfa6\"]},\n{\"name\":\"Smaller init for Muon matrices\",\"members\":[\"sb69220affc\"]},\n{\"name\":\"Graded stream write rates\",\"members\":[\"s9ca5ee94d0\"]},\n{\"name\":\"No-affine norms with scalar temperature\",\"members\":[\"s2da3e1c4b5\"]},\n{\"name\":\"Magnitude-aware head temperature\",\"members\":[\"sf46adba8d2\"]},\n{\"name\":\"Grouped RMS statistic\",\"members\":[\"s04eaf2e68f\"]}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 261,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2077,
+  "total_tokens": 3908
+ },
+ "cost_usd": 0.01218,
+ "duration_ms": 4961,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 3908,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: depth_norm_init/inward, 8 sketches"
+ },
+ "prompt_chars": 4198,
+ "raw": {
+  "duration_api_ms": 3135,
+  "stop_reason": "end_turn",
+  "session_id": "eb833056-177e-4a1c-b80b-bc47c79ccc41",
+  "total_cost_usd": 0.0110788,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2077,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 261,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2077,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 261,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2077,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2077
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 261,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2077,
+    "webSearchRequests": 0,
+    "costUSD": 0.0110788,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 3197,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 261,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2077,
+    "total_tokens": 3908
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 261,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2077,
+    "total_tokens": 3908
+   },
+   "source": "usage"
+  }
+ }
+}

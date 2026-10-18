@@ -1,0 +1,110 @@
+{
+ "call_id": "c3c3e01a419",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Below are six sketches for the SwiGLU part under the inward constraints: four leaps built with the rerepresent operator, two tunes, with two of them starting from the layer-0 gradient anomalies.\n\nPASS 1 (scratch):\n1. Values as tokens: initialise w_down columns from token embedding rows, breaking \"value vectors start isotropic random\".\n2. Conservative field: tie w_down to the transpose of w_up so the MLP is the gradient of a gated energy, breaking \"the down projection is free\".\n3. Innovation-only write: remove the component of the MLP output along its own input, breaking \"a branch may write along any direction\".\n4. Key thresholds: a learned bias on the gate pre-activation, breaking \"no biases anywhere\".\n5. One map, one orthogonalisation: fuse gate and up into one matrix so Muon orthogonalises them jointly, breaking \"each weight matrix is orthogonalised alone\".\n6. Shared keys: one w_gate for all 12 layers with per-layer values, breaking \"separate weights per layer\".\n7. Heun step: evaluate the MLP twice per block and average, breaking \"one evaluation per layer\".\n8. Blind gate: the gate reads a detached copy of the input, breaking \"gradient flows through every path\".\n9. Depth as input: layer l weights are a linear interpolation in l between two shared weight sets, breaking \"the layer index is not an input\".\n10. Precise hidden: compute the gated product in fp32 while the GEMMs stay bf16, breaking \"one autocast dtype everywhere\".\n11. Mirror units: every hidden unit has a sign-flipped twin so the gate is odd-symmetric, breaking \"SiLU asymmetry is a feature\".\n12. Train-only slot dropout with rescale, breaking \"train compute equals test compute\".\nKept, farthest from the brief and from each other: 1, 3, 4, 5 (four, to meet the leap quota).\n\nIDEA: layer-0 down projection owns the stream\nMECHANISM: Anomaly row: the layer-0 MLP gradient norm, 0.229, sits 0.072 above its neighbours' trend on all three seeds. Rivals: (a) layer 0 genuinely learns the unigram and bigram statistics that drive the step 1 to 100 loss drop, so its gradient is honestly large; (b) scale leverage: the embedding enters at RMS 0.02 while branch outputs write at RMS near 1, so block 0 replaces the embedding and sets the denominator of every later RMSNorm, giving its weights roughly 50x the leverage of any other block; (c) probe artifact: the four streams are exact copies at the input of block 0, so the per-stream gradients summed into block 0 are perfectly correlated and the norm counts duplication rather than learning. Five-minute probe on the step-100 checkpoint: rescale tok.weight by 10 and 0.1 and remeasure block 0 and block 1 gradient norms with one micro-batch; (b) predicts the layer-0 excess moves with the scale, (a) predicts it stays, and for (c) compare the cosine between the four per-stream gradients at block 0 against block 6, which (c) predicts is near 1 only at block 0. If the least popular rival (b) holds, the fix is an init that lets block 0 start at the scale it will adopt anyway: w_down of layer 0 initialised at std 0.02 or higher instead of 0.02 divided by sqrt(24), while layers 1 to 11 keep the damped init or go to zero.\nPREDICTION: Loss at step 100 lower by 0.03 to 0.06, final validation loss lower by 0.002 to 0.005; parameter count and step time unchanged.\nTEST: Three-way 45-step matched smoke with layer-0 std in 0.0041, 0.02, 0.04 and layers 1 to 11 in 0.0041 or 0; discard if no setting beats the baseline curve at step 45 by 0.02.\nSOURCE: own, with the zero-init option from https://github.com/KellerJordan/modded-nanogpt\nTARGET: gradient norm spread (layer-0 MLP excess down toward its neighbours), residual RMS growth slightly down\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: memory values initialised as token embeddings\nMECHANISM: Anomaly row: the layer-0 attention gradient norm, 0.291, is 0.252 above what its neighbours predict on all three seeds. Rivals: (a) layer-0 attention does the previous-token copy that the recall measurement rewards most, 4.48 against 6.70 nats, so its gradient is honestly large; (b) substitution: with random value vectors, the layer-0 MLP cannot write a next-token-shaped vector until Muon rotates w_down, so attention's copy of the previous embedding is the cheapest route to bigram statistics and absorbs the gradient the MLP should take; (c) artifact: block 0 reads four identical streams so its summed gradient double counts correlated stream gradients. Five-minute probe: on the checkpoint, zero layer-0 wo and measure the loss rise on recall tokens against the rest, and compute the cosine between each w_down column of layer 0 and its nearest tok.weight row; (b) predicts that columns are already drifting toward embedding rows and that ablating attention hurts recall tokens far more than others. Rerepresented, the MLP is a key-value memory whose values are added to a stream read by the tied embedding; the natural edit is that values should be tokens, so if (b) holds, initialise the 1077 w_down columns of every layer as unit-normalised rows of tok.weight for token ids 0 to 1076, which are roughly the most frequent merges, scaled to the baseline's init RMS.\nPREDICTION: Loss on rank 0 to 100 tokens and recall tokens lower by 0.05 at step 100, layer-0 attention gradient norm down by a third, final validation loss lower by 0.003 to 0.008; no change in parameters or time.\nTEST: 45-step matched smoke against the baseline, seed paired; also confirm --build-only parameter count unchanged.\nSOURCE: own\nTARGET: recall-token loss down, gradient norm spread down at layer 0\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The value vectors of the feed-forward memory may start aligned with the output vocabulary instead of isotropically random.\nKEEPS: Architecture, width, SiLU gating, optimiser and tied head unchanged; only the starting point of w_down differs.\nP_SUCCESS: 0.12\nKILL: Loss at step 45 not below the baseline's matched-step loss by at least 0.02, since an init effect that does not show early will not show at all.\n\nIDEA: innovation-only feed-forward write\nMECHANISM: Rerepresented as a predictive coder, each block's branch adds the innovation the stream does not already carry; the natural edit is that an innovation is orthogonal to the current state. In the code, the component of the MLP output along the unit-normalised input direction only rescales the stream, which every later pre-norm removes, so w_down spends capacity on a direction that changes only later layers' sensitivity, not their input. Subtract the projection of the output onto the normalised input, one dot product per token, no new parameters.\nPREDICTION: Residual RMS after block 11 falls from 10.9 to under 8 with the same step-100 loss or better by 0.01; final validation loss changes by -0.004 to +0.01; step time within 1 percent.\nTEST: 45-step matched smoke plus the residual RMS probe; discard if loss is worse at step 45 or RMS growth does not fall.\nSOURCE: own\nTARGET: residual RMS growth down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A branch may write along any direction, including the direction the stream already points in.\nKEEPS: Same matrices, gating, width and residual mixing; the attention branch still writes freely.\nP_SUCCESS: 0.08\nKILL: Step-45 loss above the baseline's by 0.02 or more.\n\nIDEA: key thresholds on the gate\nMECHANISM: Rerepresented as a key-value memory, each hidden unit is a key that should fire for few inputs; without a threshold, symmetry makes every SiLU unit active for about half of all inputs, so slots cannot specialise to the rare-token facts that cost 11.6 nats. Add a learned bias on the gate pre-activation only, initialised at zero and trained by AdamW since it is one-dimensional, so each key learns its own firing threshold.\nPREDICTION: Loss on rank 1000 to 50304 tokens lower by 0.02 to 0.04 at the end, final validation loss lower by 0.003 to 0.008; 12,924 extra parameters, step time unchanged.\nTEST: 45-step matched smoke and a check that the bias vector lands in the AdamW group; later confirm the rare-token cell moves on a saved checkpoint.\nSOURCE: own\nTARGET: loss on rare tokens down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: No linear layer in the recipe carries a bias.\nKEEPS: SiLU gate, width, three matrices, Muon on all 2-D weights.\nP_SUCCESS: 0.15\nKILL: Step-45 loss worse than the baseline's by 0.01.\n\nIDEA: one map, one orthogonalisation\nMECHANISM: Rerepresented, the first stage of the MLP is a single linear map from 384 to 2154 dimensions followed by a fixed bilinear nonlinearity, and Muon is steepest descent under the spectral norm of that one map. Storing gate and up as one fused matrix makes Muon orthogonalise them jointly, so the gate update and the up update share one orthonormal input basis instead of being free to learn the same input direction twice in a step; the per-entry update RMS is unchanged by the shape-aware scale, so only the coupling changes, and one GEMM replaces two.\nPREDICTION: Step time down 2 to 3 percent, parameter count identical, validation loss lower by 0.002 to 0.005.\nTEST: 3-step timing plus a 45-step matched smoke; discard if the loss curve is not at least equal at step 45.\nSOURCE: own\nTARGET: update-norm spread down, validation loss\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Each weight matrix is orthogonalised on its own by the optimiser.\nKEEPS: Same parameters, same nonlinearity, same optimiser code and learning rates.\nP_SUCCESS: 0.10\nKILL: Step-45 loss above the baseline's by 0.02, or any NaN in the first 45 steps.\n\nIDEA: gate pre-activation scale at init\nMECHANISM: With w_gate at std 0.02 and unit-RMS input, the gate pre-activation has std 0.39, where SiLU is nearly linear, so the MLP starts as a selectivity-free quadratic form and Muon's fixed-RMS updates need tens of warmup steps to reach the nonlinear regime; this matches the per-10-step improvement halving after step 10. Raising only the w_gate init std puts units in the selective regime from step 0.\nPREDICTION: Loss at step 100 lower by 0.02 to 0.04, final validation loss lower by 0.001 to 0.004; no change in parameters or time.\nTEST: 45-step matched smoke with w_gate std in 0.02, 0.04, 0.08, w_up and w_down unchanged; discard if no setting beats the baseline at step 45 by 0.015.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 23215,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 19024,
+  "total_tokens": 45668
+ },
+ "cost_usd": 2.243195,
+ "duration_ms": 355276,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 45668,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:diagnosis",
+  "operator": "inward",
+  "seed": "",
+  "note": "Per-token computation: SwiGLU MLP / inward / diagnosis",
+  "node": "mlp_swiglu",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 42489,
+ "raw": {
+  "duration_api_ms": 353834,
+  "stop_reason": "end_turn",
+  "session_id": "bfa12110-8912-46b8-bb0d-7611aee750f3",
+  "total_cost_usd": 1.5421067499999999,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 19024,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 23215,
+   "output_tokens_details": {
+    "thinking_tokens": 19223
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19024,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 23215,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 19024,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 19024
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 23215,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 19024,
+    "webSearchRequests": 0,
+    "costUSD": 1.5421067499999999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 19223,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 353944,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 23215,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19024,
+    "total_tokens": 45668
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 23215,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19024,
+    "total_tokens": 45668
+   },
+   "source": "usage"
+  }
+ }
+}

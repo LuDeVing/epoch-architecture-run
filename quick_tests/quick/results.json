@@ -1,0 +1,47 @@
+{
+ "strongest_scaled_v2": {
+  "steps": 300,
+  "last50": 5.1507,
+  "at100": 6.1059,
+  "step_s": 2.67,
+  "params_nonembed": 21242304,
+  "vram": 3.12,
+  "error": null
+ },
+ "unsafe_narrow_keys": {
+  "steps": 300,
+  "last50": 5.1283,
+  "at100": 6.0896,
+  "step_s": 2.51,
+  "params_nonembed": 21241536,
+  "vram": 3.02,
+  "error": null
+ },
+ "unsafe_one_stream_13": {
+  "steps": 300,
+  "last50": 5.1844,
+  "at100": 6.1163,
+  "step_s": 1.53,
+  "params_nonembed": 23011840,
+  "vram": 2.7,
+  "error": null
+ },
+ "unsafe_delay_line": {
+  "steps": 300,
+  "last50": 5.086,
+  "at100": 6.0259,
+  "step_s": 2.58,
+  "params_nonembed": 21242304,
+  "vram": 3.12,
+  "error": null
+ },
+ "unsafe_unigram_prior": {
+  "steps": 300,
+  "last50": 5.1716,
+  "at100": 6.0877,
+  "step_s": 2.72,
+  "params_nonembed": 21242304,
+  "vram": 3.53,
+  "error": null
+ }
+}

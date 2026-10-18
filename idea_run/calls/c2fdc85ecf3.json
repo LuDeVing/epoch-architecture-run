@@ -1,0 +1,110 @@
+{
+ "call_id": "c2fdc85ecf3",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "PASS 1 (scratch):\n\nEight rules of this part, as testable sentences, ranked by how much of the recipe depends on each:\n1. Keys and values are linear images of the normed residual read, so a token's K and V cannot depend on which features co-occur in it.\n2. Key heads and value heads have the same width of 64, even though a 128-rank latent can fill at most 128 of the 384 key dims per layer.\n3. Every layer owns its own 128 to 768 decoder, so no layer can reuse another layer's KV code.\n4. After the latent RMSNorm, every token's value mass is bounded the same way, so no token can opt out of being read.\n5. Softmax mass is divided only among real preceding tokens, so the first tokens must serve as sinks.\n6. The rotary and content sub-vectors share one softmax scale even though only the content part is RMS-normed.\n7. The latent of token t is a function of token t alone.\n8. All six heads read the same 128 latent dims with no per-head correction.\n\nTwelve seeds, one rule each:\n- S1 gated latent: c = norm(W_c x ⊙ silu(W_g x)), K/V become nonlinear in x. [breaks 1]\n- S2 narrow keys, wide values: K 32 content dims per head, V 96 per head, same expand width. [breaks 2]\n- S3 one expand matrix shared by all 12 layers, a global KV codebook. [breaks 3]\n- S4 per-head sigmoid value gate from x so a token can withhold its value. [breaks 4]\n- S5 learned 128-dim latent sink register prepended as key position 0. [breaks 5]\n- S6 RMSNorm the rotary sub-vectors with a learned gain. [breaks 6]\n- S7 two-tap causal conv on the key latent only, so keys carry the previous token. [breaks 7]\n- S8 per-head low-rank K/V residual on top of the shared latent. [breaks 8]\n- S9 top-64-of-128 hard sparsification of the latent per token with straight-through gradient. [breaks \"every latent dim is active\"]\n- S10 latent for V taken before the norm, latent for K after it. [breaks \"one norm serves both\"]\n- S11 per-layer latent width 64/128/192 by depth with a constant mean. [breaks \"same width in every layer\"]\n- S12 queries absorb the expand matrix and attend in latent space directly. [breaks \"attention runs on expanded keys\"]\n\nKept as leaps, farthest from the brief and from each other: S1, S3, S4. The operator leap, dropping rule 2, is S2. S5, S6, S8 are ports or tunes and appear below as such.\n\nIDEA: Narrow keys, wide values\nMECHANISM: The expand matrix keeps its 128 to 768 shape but splits it 192 for keys and 576 for values, giving each head 32 content key dims plus the 32 rotary dims and 96 value dims; wq shrinks to 6 by 64. Keys across all six heads already have rank at most 128, so 64 key dims per head are mostly redundant, while values carry the content that wo reads and gain from width.\nPREDICTION: Non-embedding parameters fall by about 74k per layer, under 0.9M total; step time within 3 percent of baseline; validation loss lower by 0.01 to 0.02 nats at 50M tokens, with the gain visible from step 200 on.\nTEST: Parameter count by build-only, a 3-step timing, then a 45-step matched smoke run on seed 0 against the baseline curve.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Key heads and value heads must have equal width.\nKEEPS: One shared normed 128-dim latent, six heads, decoupled 32-dim rotary path, QK RMSNorm on the content part, full q projection.\nP_SUCCESS: 0.18\nKILL: Mean training loss over steps 40 to 45 more than 0.03 nats above the baseline's at the same steps.\n\nIDEA: Gated nonlinear latent\nMECHANISM: Add a 384 to 128 gate projection and set the latent to norm(W_c x times silu(W_g x)), so the KV code can select features conditionally on the token rather than being a fixed linear image of it. The whole K/V path is currently linear up to norms, which wastes the latent on features that only matter in combination.\nPREDICTION: Parameters rise by 49k per layer, about 0.59M total, within the cap; step time up by under 3 percent; loss lower by 0.01 nats or more, with the largest gap on rare tokens whose K/V need context-dependent coding.\nTEST: Build-only parameter count, 3-step peak VRAM check since the gate adds a 128-wide activation per token, then a 45-step matched smoke run.\nSOURCE: own\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Keys and values are linear functions of the normed residual read.\nKEEPS: 128-dim latent shared by K and V and by all heads, latent RMSNorm before expansion, separate q path, rotary path from x.\nP_SUCCESS: 0.2\nKILL: Mean loss over steps 40 to 45 not below the baseline's by at least 0.01 nats, or peak VRAM above 5.55 GB.\n\nIDEA: Global KV codebook\nMECHANISM: One 128 to 768 expand matrix is shared by all twelve layers, so every layer's compress must write its latent into a common code that one decoder turns into keys and values; layers can then read each other's KV conventions, and the decoder sees twelve times the gradient signal. This frees about 1.08M parameters, which stay unspent to isolate the effect.\nPREDICTION: Non-embedding parameters drop to about 20.2M; step time unchanged; early loss falls faster than baseline because the shared decoder trains on twelve layers' worth of gradient, and final loss is lower by at least 0.005 nats if the shared code does not starve deep layers.\nTEST: Build-only count, then a 45-step matched smoke run; also log per-layer latent RMS at step 45 to see whether deep layers push the shared code into saturation.\nSOURCE: own\nTARGET: residual RMS growth, down; validation loss down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every layer owns its own latent decoder.\nKEEPS: Per-layer compress, latent norm, per-layer q, rotary and wo, head layout and all shapes seen by SDPA.\nP_SUCCESS: 0.1\nKILL: Mean loss over steps 40 to 45 more than 0.02 nats above the baseline's.\n\nIDEA: Per-head value withhold gate\nMECHANISM: A 384 to 6 projection gives each head a sigmoid gate per token, initialised near 1, that multiplies that token's value vector. The latent RMSNorm bounds every token's value mass, so a token that should not be read, such as a stop word, can only be ignored through the keys; the gate lets it withhold its value directly, which also removes the need to use first tokens as sinks.\nPREDICTION: Parameters rise by 2.3k per layer; step time unchanged; first-token attention mass falls and validation loss drops by 0.005 to 0.01 nats.\nTEST: A 45-step matched smoke run; then measure first-token attention mass on a fixed batch at step 45 in both models.\nSOURCE: own\nTARGET: first-token attention mass, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every token's value contribution is bounded identically after the latent norm.\nKEEPS: Latent norm, shared K/V latent, QK norm, head count and the full SDPA path.\nP_SUCCESS: 0.15\nKILL: Mean loss over steps 40 to 45 not below the baseline's by at least 0.005 nats.\n\nIDEA: Learned latent sink register\nMECHANISM: Each layer learns one 128-dim latent vector that goes through the same latent norm and expand as real tokens and is prepended as key and value position 0 with a zero rotary part, so queries can dump softmax mass on it without distorting the first real token's key. This is MiMo's and gpt-oss's sink, moved into the latent so it costs 128 parameters per layer instead of a per-head logit.\nPREDICTION: Parameters up by 1.5k; step time up by at most 5 percent because an explicit causal mask of T by T plus 1 replaces is_causal; loss lower by about 0.005 nats, max attention logit lower in deep layers.\nTEST: 3-step timing and peak VRAM check first, since the masked SDPA path may change kernel choice; then a 45-step matched smoke run.\nSOURCE: https://arxiv.org/html/2601.02780v1\nTARGET: first-token attention mass, down; max attention logit, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Per-head low-rank K/V residual\nMECHANISM: Each head adds a rank-16 correction to its key and value, x to 16 to 64, on top of the shared-latent expansion, as in LRKV, so heads are no longer confined to one 128-dim subspace. This tests the brief's open question of LRKV on a normed MLA latent at this scale.\nPREDICTION: Parameters up by about 86k per layer, 1.03M total, under the cap; step time up by about 4 percent; loss lower by 0.01 nats, most of it on recall-type tokens where head diversity matters.\nTEST: Build-only count against the 23.37M cap, 3-step timing, 45-step matched smoke run; sweep rank 8 and 16.\nSOURCE: https://arxiv.org/html/2601.11471v2\nTARGET: recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Rotary sub-vector init scale\nMECHANISM: Raise the init std of the 32 rotary columns of wq and of the rotary projection from 0.02 to a swept value so rotary logits start at the same magnitude as the RMS-normed content logits instead of about one tenth. Muon updates have a fixed spectral size regardless of init, so the early ratio of position to content signal is set by this constant and shapes which heads learn positional roles first.\nPREDICTION: No parameter or time change; early loss falls faster, and loss at late positions improves by 0.005 nats or more.\nTEST: 45-step matched smoke runs at std 0.02, 0.05, 0.1 and 0.2; discard values whose step-45 loss is not below baseline.\nSOURCE: own\nTARGET: loss at late positions, down\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 12107,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20107,
+  "total_tokens": 35643
+ },
+ "cost_usd": 1.376215,
+ "duration_ms": 185372,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 35643,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "tile",
+  "note": "Sequence mixing: latent KV compression and expansion / inward / research",
+  "node": "attn_latent_kv",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46049,
+ "raw": {
+  "duration_api_ms": 183615,
+  "stop_reason": "end_turn",
+  "session_id": "1409d413-76df-4147-b3e6-87ffc778e14d",
+  "total_cost_usd": 1.00836675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20107,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 12107,
+   "output_tokens_details": {
+    "thinking_tokens": 8463
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20107,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 12107,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20107,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20107
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 12107,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20107,
+    "webSearchRequests": 0,
+    "costUSD": 1.00836675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 8463,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 183814,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 12107,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20107,
+    "total_tokens": 35643
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 12107,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20107,
+    "total_tokens": 35643
+   },
+   "source": "usage"
+  }
+ }
+}

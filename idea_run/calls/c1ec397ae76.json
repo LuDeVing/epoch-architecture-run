@@ -1,0 +1,110 @@
+{
+ "call_id": "c1ec397ae76",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "CHAIN (the causal path from the change to the loss):\n\nL1: Lowering the `mix_logits` init from 6 to 3, 2 or 1 makes more of each stream flow into the others at every mixing stage. | quantity: off-diagonal mass per stage, 3·b, read from the Sinkhorn output at step 0 and at the end | baseline: 0.74% at step 0; about 4.8% at the end from weight decay alone (belief) | expect: about 13% at init 3, 29% at init 2 and 52% at init 1 at step 0, growing over the run as decay shrinks the logits | breaks if: init 6 already ends at 10% or more, or init 2 logits climb back above 4 (the optimiser re-sharpens to identity).\n\nL2: Read weights leave uniform, so the mixing matrix starts to affect the loss at all. | quantity: max abs(softmax(read_logits) − 0.25) over the 24 stages | baseline: 0 at init; unmeasured later | expect: above 0.05 by step 100, driven by Muon | breaks if: it stays below 0.02 for the whole run, so the mixing has no effect on the loss at any init.\n\nL3: More exchange shrinks the differences between streams. | quantity: spread ratio ‖x − mean‖/‖mean‖ at block 11 | baseline: unmeasured; it should be small because the write asymmetry is only 2% | expect: init 2 or lower gives a ratio at least 10x below init 6 | breaks if: the ratio is higher at init 2 than at init 6 (exchange creates differences instead of erasing them).\n\nL4: Smaller spread removes per-stream dominance but leaves the mean stream unchanged. | quantity: max-stream RMS / mean-stream RMS at block 11; mean-stream RMS growth | baseline: ×7.8 RMS growth in the single-stream baseline; this design is unmeasured | expect: the dominance ratio moves toward 1.0 at low init; mean-stream RMS growth changes by less than 3% | breaks if: mean-stream RMS growth changes by more than 10% (column sums are not 1, or a precision artefact).\n\nL5: Less stream individuality changes the exam loss. | quantity: exam val loss over 3 seeds | baseline: pooled baseline mean (value not given) | expect: within about ±0.005 of init 6, drifting toward single-stream behaviour; a win larger than 0.005 is unlikely | breaks if: init 2 or 3 beats init 6 by more than 0.005 at p < 0.01.\n\nWEAKEST: L2\n\nQUESTIONS:\n\nQ1: Does the loss depend on `mix_logits` at all while `read_logits` are uniform? | decides: rank the sweep by 45-step smoke loss vs rank it by a stream diagnostic or by full runs.\nA1: No. Sinkhorn ends with a column normalisation, so the column sums are exactly 1 in fp32 and the stream mean is invariant to M. Every read with uniform weights and the final `x.mean(dim=2)` read only the mean. So the forward pass is independent of M, and the gradient to `mix_logits` is zero up to bf16 rounding until the read logits move.\n\nQ2: Which way does a lower temperature move the differences between streams? | decides: sweep {1, 2, 3, 6} vs sweep only {3, 4, 6} or switch to a non-contracting mix.\nA2: At init, M = aI + b(J − I), with eigenvalue 1 on the mean and a − b on every difference direction.\n- The per-stage factor a − b is 0.990 at init 6, 0.827 at init 3, 0.615 at init 2 and 0.30 at init 1.\n- Over 24 stages this compounds to 0.79, 0.010, 8.6e-6 and about 3e-13.\n- So inits of 2 or lower wipe out stream differences within a few blocks. The model then collapses to a single residual stream, which is the opposite of the stated mechanism.\n\nQ3: Can streams 2 and 3 ever differ? | decides: keep the current `write_logits` init vs give all four streams distinct read and write inits.\nA3: No (belief, from symmetry).\n- Both streams start as the same embedding copy and have identical write logits (−0.01 in both stages) and identical read logits.\n- The mix logits are symmetric under swapping 2 and 3, so the forward pass is equivariant under that swap.\n- Their gradients and updates are therefore identical, and they stay clones for the whole run. The design is effectively 3 streams, and no temperature fixes this.\n\nQ4: Which optimiser updates the stream logits, and what does weight decay do to them? | decides: leave the stream logits in the current groups vs a separate AdamW group with weight decay 0.\nA4: Placement follows from the `ndim` filter in `build_optimizers`:\n- **`mix_logits` (2,4,4):** 3-D, so it goes to AdamW at 3e-3 with weight decay 0.1. Decay alone multiplies the diagonal by exp(−0.1·3e-3·~1281 effective steps) ≈ 0.68. That takes init 6 to about 4.1 (1.6% off-diagonal) and init 2 to about 1.36 (14.5% off-diagonal), so decay is already a hidden temperature schedule.\n- **`read_logits` and `write_logits` (2,4):** 2-D, so they go to Muon at lr 0.02 with weight decay 0.1. Newton–Schulz rescales the update to unit spectral norm, so even tiny gradients produce updates of about 0.01 per entry per step.\n- **Effect of decay on read/write logits:** it pulls them back to symmetry (uniform reads, gain 1).\n\nQ5: Can a 45-step smoke run rank the inits? | decides: smoke sweep vs going straight to full-length runs of two values.\nA5: No.\n- Warmup lasts 30 steps, so by step 45 the read logits have moved only about 0.2. The effect of M is then second order (read deviation × stream spread) and is swamped by rounding and seed noise.\n- C7 asks for a gap above 0.005 nats at p < 0.01, which only full runs can show.\n- A same-seed smoke sweep is useful only as a sanity check that the loss curves are nearly identical.\n\nQ6: Does the 4-stream design beat the single-stream baseline at all? | decides: spend runs on temperature vs first ablate to n = 1.\nA6: Unknown; nothing in the brief measures it. At 1B scale, static ×4 hyper-connections gave a small gain over the baseline, and dynamic ×4 did better (https://arxiv.org/pdf/2409.19606). Because low temperature converges to single-stream behaviour (A2), a neutral 4-stream result implies a neutral sweep.\n\nQ7: Does the mixing push the residual through bf16? | decides: compute the mix in fp32 with autocast disabled vs leave it as is.\nA7: Belief, not run.\n- Under autocast the einsum lowers to bmm, which runs in bf16. The carried residual is therefore rounded to bf16 at all 24 stages, even though the write addition promotes back to fp32.\n- After the bf16 cast, column sums are off by about 4–5e-4 at both init 6 and init 2. That shrinks the mean by roughly 1% over depth. Temperature barely changes this, but it adds noise to any comparison.\n\nQ8: Can the final readout use stream differences? | decides: keep the mean readout vs a learned softmax final read.\nA8: No. `x.mean(dim=2)` is invariant to M and to how the signal is spread across streams. Only the 24 intermediate reads can exploit differences, which caps what any mixing temperature can buy.\n\nQ9: Where does the literature say Birkhoff-constrained mixing ends up, and has a lower init been tested? | decides: lower init vs a symmetry-breaking init.\nA9: Neither paper tested a lower init.\n- sHC reports that mHC matrices collapse toward identity and that non-negativity blocks subtractive mixing (https://arxiv.org/pdf/2603.20896).\n- The stream-collapse paper reports that the mix stays near identity while one stream dominates, and that a symmetry-breaking init helps (https://arxiv.org/pdf/2606.03483).\n\nQ10: Does the 20-iteration Sinkhorn cost matter for step time, and does the init change it? | decides: 20 iterations per forward vs an exact parameterisation or mixing at fewer stages.\nA10: The init does not change the cost.\n- Each optimizer step runs about 40 tiny kernels per stage × 24 stages × 8 micro-batches forward, plus the backward, although M depends only on the parameters. The wall-time share on the 4050 is unmeasured.\n- At init, M is a symmetric circulant matrix, so Sinkhorn is a no-op there.\n\nKNOWN:\n- `mix_logits` is a (2,4,4) Parameter initialised to 6·I. At init the diagonal is 0.9926 and each off-diagonal is 0.00246, not 99.75% identity as the variant states. [script]\n- Diagonal and off-diagonal entries at the other inits: 0.870/0.043 at init 3, 0.711/0.096 at init 2, 0.475/0.175 at init 1. [belief]\n- Sinkhorn ends with a column normalisation, so column sums are exactly 1 in fp32 and the stream mean is invariant to M. [script]\n- All 4 streams start as the same copy of the embedding (`unsqueeze(2).expand`). The read logits are zeros, so every read is the mean, and the output is `x.mean(dim=2)`. [script]\n- Write gains are 2·sigmoid(logit), which is 1.015 on the favoured stream and 0.995 elsewhere. The streams therefore differ by only about 2% of each write. Stage 0 favours stream 0, stage 1 favours stream 1, and streams 2 and 3 are never favoured. [script]\n- `read_logits` and `write_logits` are 2-D, so they go to Muon at lr 0.02 with weight decay 0.1. `mix_logits` is 3-D, so it goes to AdamW at 3e-3 with weight decay 0.1. [script]\n- The effective learning-rate sum over the run is about 1281 steps × lr: 1525 steps, 30 warmup, 458 cooldown. [script]\n- Decoupled decay alone shrinks the diagonal mix logit by a factor of about 0.68 by the end, taking 6 to 4.1. [belief]\n- The difference-direction gain per stage is a − b: 0.990 at init 6, 0.827 at init 3, 0.615 at init 2, 0.30 at init 1. [belief]\n- The einsum runs in bf16 under autocast, so the carried residual is rounded to bf16 at every stage. [belief]\n- The change adds 0 parameters and costs no extra memory or step time; C3 and C4 are untouched. [script]\n- Single-stream baseline at step 100: RMS growth ×7.8, loss 6.1789, layer-0 attention gradient 0.24 against about 0.02 elsewhere. [measured]\n- Static HC ×4 reaches an OLMo-1B eval loss of 2.791, against 2.781 for dynamic ×4. https://arxiv.org/pdf/2409.19606 [web]\n- On a 30M nanoGPT, alternative doubly-stochastic parameterisations reach only parity. https://arxiv.org/pdf/2604.02309 [web]\n- Version judged most likely to work: init 3 rather than 1 or 2, and only combined with distinct per-stream inits. On its own, expect a null result. [belief]\n- What to log: spread ratio, max/mean stream RMS, read-weight deviation, the off-diagonal mass of M per stage at the end, and `torch.equal(x[:,:,2], x[:,:,3])`. [belief]\n\nASSUMES:\n- The streams start as identical copies, and two of them share every init.\n- Exchange between streams should be non-negative and doubly stochastic, that is, diffusive.\n- Exchange between streams is useful at 21M parameters and 50M tokens.\n- The mixing is static and data-independent, with one temperature for all 24 stages.\n- The final readout is a plain mean over streams.\n- Optimiser placement and weight decay on the stream logits are neutral.\n- Short smoke runs can rank inits.\n- bf16 mixing is precise enough.\n- The 4-stream design is at least as good as a single stream.\n\nNEW IDEAS:\n\nSLOT: drop\nIDEA: Distinct stream inits\nMECHANISM: Give all four streams distinct write-logit patterns (stream = stage index mod 4 favoured, ±0.5) and slightly distinct read logits. This removes the exact 2↔3 clone and gives the mixing real differences to act on.\nPREDICTION: Streams 2 and 3 are no longer bit-identical at step 20, and the spread ratio at block 11 is at least 5x the current value at step 100.\nTEST: A 20-step smoke run checking `torch.equal(x[:,:,2], x[:,:,3])` and the spread ratio.\nSOURCE: https://arxiv.org/pdf/2606.03483\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: strengthen\nIDEA: Mean-preserving orthogonal mix\nMECHANISM: Replace Sinkhorn with M = J/4 + P_⊥ R P_⊥, where R is the Cayley transform of a zero-initialised skew 3×3 on the zero-mean subspace. The mean is kept exactly, differences are rotated without shrinking, negative entries are allowed, and no iterations are needed.\nPREDICTION: The spread ratio does not decay with depth, and step time drops measurably.\nTEST: A 100-step smoke run comparing the spread ratio by layer and the loss at matched steps against the current script.\nSOURCE: https://arxiv.org/pdf/2603.20896\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: specialise\nIDEA: Mix at 3 stages, not 24\nMECHANISM: Use exact identity, skipping the einsum, at 21 of the 24 stages, and apply a learned mix at init 3 only after blocks 3, 7 and 11. This cuts kernel launches and the per-stage bf16 rounding of the residual while keeping some exchange.\nPREDICTION: Step time drops by 5% or more, and loss is unchanged within noise.\nTEST: `--smoke-steps 50`, comparing tok/s and `loss_curve`.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: port\nIDEA: Learned final stream read\nMECHANISM: Replace `x.mean(dim=2)` with softmax(final_read) weights initialised to zeros. The step-0 forward is identical, but stream-specific writes can now reach the logits.\nPREDICTION: The final read weights leave 0.25 by more than 0.05 by step 300, with a small loss change at matched steps.\nTEST: A 300-step smoke run logging the final read weights.\nSOURCE: own\nPART: Output readout (final norm and tied head)\nKIND: port\n\nSLOT: combine\nIDEA: Embedding stream via the clone slot\nMECHANISM: Turn stream 3, currently a clone of stream 2, into an embedding-only stream: write gain fixed at 0 and its row and column of M pinned to identity. Every read can then mix in x0, as with the modded-nanogpt embedding skip.\nPREDICTION: Read weight on stream 3 rises above 0.25 in some blocks; loss at matched step 100 is equal or lower.\nTEST: A 100-step smoke run on 2 seeds comparing read weights and the loss curve.\nSOURCE: https://github.com/kellerjordan/modded-nanogpt\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: other\nIDEA: Routed writes (one stream per layer group)\nMECHANISM: Block l writes only into stream l mod 4, with gain 0 elsewhere and identity mixing. The streams become a structured memory of layer groups that the softmax reads select from, similar to a rank-4 DenseFormer. A learned final read replaces the mean.\nPREDICTION: Strong stream specialisation (spread ratio above 0.5), and reads in late blocks put their weight on specific groups.\nTEST: A 100-step smoke run against the current script with the same seed.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: leap\nBREAKS: Every layer writes into every stream with gain near 1.\nKILL: Step-100 loss more than 0.08 nats above the current script, averaged over 2 seeds.\n\nOPEN:\n- Does the 4-stream design beat n = 1 at all under this budget? | build: yes | decides: temperature sweep vs dropping multi-stream\n- How far do the read logits on Muon actually move by step 100 and by the end? | build: yes | decides: leave them on Muon vs move them to AdamW with weight decay 0\n- Does Newton–Schulz amplify noise-sized asymmetric gradients on the 2×4 write logits into real symmetry breaking? | build: yes | decides: rely on the optimiser for symmetry breaking vs explicit distinct inits\n- Is bf16 rounding of the residual at every stage costing loss relative to an fp32 mix? | build: yes | decides: fp32 einsum under autocast disabled vs the current code\n- What fraction of step time is the per-micro-batch Sinkhorn on the RTX 4050? | build: yes | decides: 20 iterations vs an exact or sparse-stage mix\n- What is the seed-to-seed spread of the exam loss for this script, and can 3 seeds resolve 0.005 nats? | build: no | decides: 3 vs 5 seeds\n- Should weight decay on `mix_logits` be kept, since it already acts as a temperature schedule? | build: yes | decides: weight decay 0.1 vs 0 on the stream logits",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 25148,
+  "cache_read_input_tokens": 649,
+  "cache_creation_input_tokens": 16699,
+  "total_tokens": 42498
+ },
+ "cost_usd": 2.20021,
+ "duration_ms": 254343,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 42498,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "depth_stream_mix-in-k06",
+  "seed": "",
+  "note": "interrogating 'Lower mixing logit init (less identity)' gen 0 depth 0",
+  "node": "depth_stream_mix",
+  "depth": 0,
+  "gen": 0
+ },
+ "prompt_chars": 36259,
+ "raw": {
+  "duration_api_ms": 252619,
+  "stop_reason": "end_turn",
+  "session_id": "c6223ae6-97eb-42bb-b495-54eb00e932b6",
+  "total_cost_usd": 0.6366897999999999,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 16699,
+   "cache_read_input_tokens": 649,
+   "output_tokens": 25148,
+   "output_tokens_details": {
+    "thinking_tokens": 18934
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 16699,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 25148,
+     "cache_read_input_tokens": 649,
+     "cache_creation_input_tokens": 16699,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 16699
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 25148,
+    "cacheReadInputTokens": 649,
+    "cacheCreationInputTokens": 16699,
+    "webSearchRequests": 0,
+    "costUSD": 0.6366897999999999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 18934,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 252800,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 25148,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 16699,
+    "total_tokens": 42498
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 25148,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 16699,
+    "total_tokens": 42498
+   },
+   "source": "usage"
+  }
+ }
+}

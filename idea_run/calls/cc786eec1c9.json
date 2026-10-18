@@ -1,0 +1,105 @@
+{
+ "call_id": "cc786eec1c9",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"name\":\"Rotary frequency spectrum retuning (theta 480)\",\"members\":[\"sf89e2085ed\"]},\n{\"name\":\"Move RoPE onto content dims / remove decoupled key\",\"members\":[\"s426e95758a\"]},\n{\"name\":\"Rotate values by position (offset-aware outputs)\",\"members\":[\"s0f57ec4870\"]},\n{\"name\":\"Null key / no self-key\",\"members\":[\"sa2949bfdd8\"]},\n{\"name\":\"Post-SDPA sigmoid output gate\",\"members\":[\"s3a1b2a6077\"]},\n{\"name\":\"Per-head rotary keys (widen shared key)\",\"members\":[\"s403cc5e2b9\"]},\n{\"name\":\"Per-head attention temperature, decay-proof log-parametrisation\",\"members\":[\"s15cb6324c5\",\"s98742624a8\",\"s977f6a937d\",\"sb951f6724d\"]},\n{\"name\":\"Separate rotary-path normalisation and gain/temperature\",\"members\":[\"s5c15bc950a\",\"s32822ad5c4\"]},\n{\"name\":\"Final norm / logit temperature log-gain\",\"members\":[\"sa7a853416d\"]}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 376,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2798,
+  "total_tokens": 4744
+ },
+ "cost_usd": 0.016609,
+ "duration_ms": 5576,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 4744,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_rope_norm/outward, 13 sketches"
+ },
+ "prompt_chars": 5857,
+ "raw": {
+  "duration_api_ms": 3954,
+  "stop_reason": "end_turn",
+  "session_id": "f7dde534-d07d-47f1-aee0-bca242eda798",
+  "total_cost_usd": 0.015112800000000001,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2798,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 376,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2798,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 376,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2798,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2798
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 376,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2798,
+    "webSearchRequests": 0,
+    "costUSD": 0.015112800000000001,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 4017,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 376,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2798,
+    "total_tokens": 4744
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 376,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2798,
+    "total_tokens": 4744
+   },
+   "source": "usage"
+  }
+ }
+}

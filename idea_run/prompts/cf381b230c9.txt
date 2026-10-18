@@ -1,0 +1,25 @@
+Match idea clusters against a list of techniques from the literature. For every cluster decide: "known" if it is the same mechanism as a K entry, "failed" if it is the same mechanism as an F entry, "new" otherwise. Same mechanism means the same change, not the same topic: a different gate on the same tensor is new. Return ONLY a JSON array of {"id": "<cluster id>", "tag": "new|known|failed", "match": "<entry label or empty>"}.
+
+TECHNIQUES:
+K0: Peri-LN (norm on both sides of each sublayer): Applies normalization to the sublayer input and to the sublayer output before the residual add, which bounds the variance each branch contributes to the stream.
+K1: LayerNorm Scaling (LNS): Multiplies each layer's norm output by 1/sqrt(layer index) so output variance does not grow with depth in Pre-LN.
+K2: OLMo 2 output-norm plus QK-norm: Moves RMSNorm onto the attention and MLP outputs (h = x + RMSNorm(Attn(x))) and adds QK-norm.
+K3: Mix-LN: Uses Post-LN in the early layers and Pre-LN in the deeper layers to even out gradient norms across depth.
+K4: HybridNorm: Normalizes the Q, K and V projections inside attention and uses a different norm placement in the FFN.
+K5: Hyper-Connections (static and dynamic): Learns the strength of connections between depths across several residual streams. Pre-Norm and Post-Norm are special non-trainable cases.
+K6: mHC (manifold-constrained Hyper-Connections): Projects the stream-mixing matrices onto the doubly stochastic manifold with Sinkhorn-Knopp to restore the identity-mapping and signal-conservation property.
+K7: NormFormer extra normalization: Adds extra norms inside the block (after attention, within the FFN, and per-head scaling) to offset the gradient-magnitude mismatch in Pre-LN.
+K8: ReZero / LayerScale (zero or small gated residual branches): Gates each residual branch with a zero- or small-initialized scalar or diagonal so each layer starts as the identity.
+K9: Muon-era speedrun init (zero-initialized projections): Initializes output projections and the classifier layer to zero, in a muP-like way.
+F0: Scaled init combined with LayerNorm Scaling: The LNS authors report that scaled initialization combined with LNS reduces LNS's benefit, so they recommend removing scaled init. This is the same interaction as the 1/sqrt(2 n_layer) branch scaling 
+F1: OLMo 2 output-norm or QK-norm used alone: The OLMo 2 ablations found that neither change alone gives good results. The benefit comes only from using them together.
+F2: Plain HybridNorm vs Pre-Norm: Plain HybridNorm scored 59.18 on average downstream, below Pre-Norm at 59.56. Only the HybridNorm* variant beat it.
+F3: Per-layer muP initialization at 10M to 500M parameters: In one study, the authors' default initialization beat the per-layer muP variant by 0.68 to 0.92 nats of training loss. muP's optimal learning rate was only more stable across sizes. This is a non-lan
+
+CLUSTERS:
+[depth_norm_init-in-k05] No-affine norms with learned scalar temperatures: Removal: every per-channel norm gain (9,600 params), which modded-nanogpt shows are unnecessary and which AdamW decay pulls toward zero all run. Reinvestment: each norm keeps a single scalar, initialized so the attention temperature starts at 1.4x and the MLP gate pre-activation at the current scale
+[depth_norm_init-in-k08] Zero-parameter norms with fixed constant temperatures: Drop the assumption that temperatures must be learned. Every norm becomes no-affine, SDPA gets a fixed `scale=1.4/sqrt(96)`, and the head logits get a fixed multiplier taken from the baseline's learned final-gain mean. This removes all 12,672 parameters with no new ones.
+[depth_norm_init-in-k09] Scalar temperature reparameterization for optimizer dynamics (log/nGPT scale): Store each scalar as p with effective value p·(s_init/s_scale), as nGPT does for its scaling factors. This sets Adam's effective step on the temperature independently of the global lr_adam.
+[depth_norm_init-in-k10] Collapse gains to mean at cooldown: Per-channel gains train normally until step 1,067. At that point each vector is replaced by its mean and frozen to a trainable scalar, so the 30% cooldown phase runs without per-channel gain noise.
+[depth_norm_init-in-k11] Identity-anchored (1+w) gain parameterization: Drop the assumption "the scalars share the decayed group with a target of 0". Keep the per-channel vectors but parameterize them as 1+w, so AdamW's decay pulls toward identity instead of toward 0.68x shrinkage.
+[depth_norm_init-in-k13] Per-head attention temperatures: Replace the q_norm gain with 6 per-head scalars stored as log τ, exempt from decay, initialized to log 1.4. Multiplicative Adam steps let each head set its own sharpness.

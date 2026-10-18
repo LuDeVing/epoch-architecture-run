@@ -1,0 +1,110 @@
+{
+ "call_id": "c8914ada4bb",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Seven sketches follow: four leaps, one port, two tunes. The scratch pass and the rule list come first.\n\nPASS 1 (scratch):\n\nTwelve seeds, one broken rule each:\n1. Normalize each of the 4 streams before the read, with channel-partitioned gain init that breaks stream symmetry at step 0. [kept]\n2. Layer l writes its branch only into lane l mod 4, so the 4 streams become depth-interleaved residual lanes. [kept]\n3. Normalization keeps state across tokens: divide by a blend of the token's own RMS and the causal prefix RMS. [operator leap]\n4. The final norm erases magnitude; re-inject log RMS as a learned logit temperature before the tied head. [kept]\n5. Init sees data: one training batch calibrates each block's MLP-side gain so pre-activations hit unit RMS.\n6. The head reads a learned softmax mix of per-stream-normalized streams instead of the plain mean.\n7. RMSNorm on each branch output before the write, gain owned by Adam. Peri-LN, a port.\n8. One gain vector shared by all 12 blocks plus one scalar per block.\n9. Gain init (l+1)^-1/2 at depth l. LayerNorm Scaling collapses to this here because gains are learned and QK-norm removes the attention-side effect.\n10. Embedding at std 1 with the final gain at 0.05, putting the tied head's temperature in the gain.\n11. Reversed ramp init: deep layers start as identity, early layers at full scale.\n12. Group-wise RMS over four 96-channel quarters per token.\n\nKept the three farthest from the brief and from each other: 1, 2, 4. Seed 5 is LSUV-adjacent, 6 is a mild variant of 1, 7 is Peri-LN, 8 and 11 are init tweaks that Muon erases, 9 and 10 are tunes, 12 is GroupNorm.\n\nRulebreak operator, eight rules of this part ranked by how much of the recipe depends on each:\nR1. Every sublayer reads a unit-RMS vector normalized per token before any projection.\nR2. The stream's scale is never reset between the embedding and the final norm.\nR3. Norm statistics are computed over the 384 channels of the collapsed read-out, never per stream and never across tokens.\nR4. The head sees the plain mean of the four streams through one final norm.\nR5. Every linear weight starts at std 0.02 and every branch output at std 0.02/sqrt(24), regardless of fan-in, role or depth.\nR6. Every layer writes its branch into all four streams with the same weight near 1.\nR7. Norm gains are per channel, per block, and start at 1 at every depth.\nR8. Init is fixed before any data is seen.\nInverted: the \"never across tokens\" clause of R3. What must change: RMSNorm gains a causal variant that carries a cumulative mean of squared RMS along the sequence, the block reads and the final norm call it, and nothing else moves. The exam forward is unchanged because the statistic is causal and computed inside forward.\n\nOne fact used by several sketches: under Muon every matrix receives a spectral-norm-1 update per step at the same rate regardless of depth, so any init scale of a matrix is washed out within roughly 50 steps. Only Adam-owned tensors, the gains, logits and embeddings, carry persistent scale. The 1/sqrt(2L) branch init is therefore a cost paid for nothing after warmup.\n\nIDEA: Per-stream norm with partitioned gains\nMECHANISM: Normalize each of the 4 streams separately before the softmax read, with a gain of shape 4 by 384 whose init is 1.5 on stream s's own channel quarter and 0.83 elsewhere, so gains average to 1 and the read-out at init equals the baseline. This inverts assumption 2, norm on the collapsed read-out. Today the loudest stream dominates every read regardless of read logits, and the identical-copy streams only diverge through the 0.03 write asymmetry. Per-stream norm decouples which stream is read from which stream is loud, and the partitioned gains give the write and mix logits stream-specific gradients from step 0, so the mixing machinery stops being inert.\nPREDICTION: Parameters rise by 27,648. Step time rises under 2 percent. Loss curve matches the baseline for the first 20 steps then runs slightly below. Per-stream RMS values, identical in the baseline, spread by more than 20 percent by step 150.\nTEST: Build-only count. A 3-step timing. A 45-step matched-seed run with a hook that logs per-stream RMS at block 6 every 15 steps.\nSOURCE: own\nTARGET: residual RMS growth: per-stream RMS spread up, overall growth unchanged\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: All four streams must be collapsed into one vector before any normalization statistic is taken.\nKEEPS: Pre-norm placement, softmax reads, Sinkhorn mixing, all shapes of attention and MLP.\nP_SUCCESS: 0.15\nKILL: Loss averaged over steps 41 to 45 higher than the matched baseline's by more than 0.03 nats, or per-stream RMS spread under 2 percent at step 45.\n\nIDEA: Depth-lane writes\nMECHANISM: In the per-block init loop, set write logits so layer l writes at weight 1 into stream l mod 4 and at weight 0.005 into the others, instead of weight 1 into all four. This inverts assumption 4, scaled init under mixing weights, and assumption 5, structurally identical layers. Each stream then holds the embedding plus six sublayer writes instead of twenty-four, so a deep layer's write is a four-times larger fraction of its lane, which is the curse-of-depth relief that LayerNorm Scaling buys with a fixed multiplier. A uniform read still sees the embedding plus a quarter of every write, so the function at init equals the baseline with the token embedding four times more prominent. The gain comes later: read logits can select a depth group, which is a static, free form of Attention Residuals.\nPREDICTION: Zero parameter change and zero step-time change. Loss within 0.01 of the baseline for 30 steps, then below it once read logits leave uniform. Per-stream RMS at the final block about half the baseline's.\nTEST: A 45-step matched-seed run logging read logits of blocks 4, 8 and 11. A 3-step timing to confirm no cost.\nSOURCE: own\nTARGET: residual RMS growth: down per stream; attention entropy in deep layers unchanged\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every layer writes its branch into every stream with the same weight.\nKEEPS: Sinkhorn mixing, uniform read init, the head's mean over streams, the 1/sqrt(2L) branch init, which Muon erases anyway.\nP_SUCCESS: 0.18\nKILL: Loss averaged over steps 41 to 45 higher than the matched baseline's by more than 0.02 nats.\n\nIDEA: Causal prefix-RMS normalization\nMECHANISM: Each read-out and the final norm divide by sqrt of half the token's own mean square plus half the causal running mean square of the prefix, instead of the token's own mean square alone. This inverts assumption 1 in its hidden form: that the norm must erase every token's magnitude. Position 0 is unchanged. A token that has received more writes than its context average keeps up to sqrt 2 of that signal and a quiet token stays quiet, so the stream's per-token magnitude becomes a readable feature for the MLP and value paths, which per-token RMSNorm destroys. The bound keeps every read within a factor sqrt 2 of the baseline scale, so no stability trick is needed.\nPREDICTION: Zero parameters added. Step time rises under 2 percent from one cumulative sum per read in float32. Loss at late positions improves more than loss at early positions. Early steps may run slightly worse while gains adapt to the new scale.\nTEST: A 3-step timing. A 45-step matched-seed run, plus one forward on 8 training windows comparing per-position loss in the last 256 positions against the baseline at step 45.\nSOURCE: own\nTARGET: loss at late positions: down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The normalization of a token depends on that token's channels only, never on other tokens.\nKEEPS: Pre-norm placement, learned per-channel gains, collapsed read-out, all attention and MLP shapes.\nP_SUCCESS: 0.08\nKILL: Any NaN, or loss averaged over steps 41 to 45 higher than the matched baseline's by more than 0.02 nats.\n\nIDEA: Magnitude as head temperature\nMECHANISM: The final norm multiplies its unit-RMS output by exp(a plus b times log RMS of the pre-norm mean stream), two scalars under Adam, both starting at 0 so the model is the baseline at init. This inverts assumption 1's output side: the head gets a confidence channel from how much the stack wrote to a token, instead of expressing confidence only through direction alignment with tied embedding rows. The multiply is applied to the 384-wide vector, so there is no extra logit tensor and no memory cost.\nPREDICTION: Two parameters added, no step-time change. Identical loss for the first 10 steps, then a small improvement concentrated on high-frequency tokens where sharper distributions pay. b moves away from 0 within 45 steps if the channel is useful.\nTEST: A 45-step matched-seed run logging a and b every 5 steps. Build-only count confirms plus 2.\nSOURCE: own\nTARGET: loss on rare tokens: down, with calibration improving where the stream is quiet\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The head's logit scale is independent of the residual stream's magnitude.\nKEEPS: Tied head, RMSNorm direction normalization, every block unchanged.\nP_SUCCESS: 0.08\nKILL: Absolute b under 0.02 at step 45 while loss is not below the baseline's, or loss averaged over steps 41 to 45 higher by more than 0.01 nats.\n\nIDEA: Branch output norm with Muon-aware gain\nMECHANISM: Add an RMSNorm on each attention and MLP output before the write, as in Peri-LN and Gemma 4's pre-plus-post placement, and drop the 1/sqrt(2L) branch init. This inverts assumption 1, pre-norm only, and assumption 4. The recipe-specific reason: Muon grows every branch matrix at the same per-step spectral rate, so write magnitude drifts upward uniformly and the scaled init is erased in 50 steps, whereas an Adam-owned gain on the branch output holds the write scale as a learned per-channel quantity. Gain init is 0.2, paired with the embedding at std 1 and the final gain at 0.05 from the next sketch so the embedding is not swamped by layer 0's unit-RMS write.\nPREDICTION: Parameters rise by 9,216. Step time rises under 2 percent. Gradient norm spread across depth narrows and the residual RMS at block 11 grows less than 1.5 times over training.\nTEST: A 3-step timing. A 45-step matched-seed run with the global gradient norm and block-11 stream RMS logged every 15 steps.\nSOURCE: https://arxiv.org/html/2502.02732v3\nTARGET: residual RMS growth: flat across training; gradient norm spread: down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Unit-scale embedding, temperature in the final gain\nMECHANISM: Initialize the tied embedding at std 1.0 instead of 0.02 and the final norm gain at 0.05 instead of 1, so initial logits keep std near 1. This inverts assumption 3, uniform std 0.02 regardless of role. The embedding is under Adam at lr 3e-3 and moves slowly, while branch writes grow under Muon, so by mid-training the token identity is a few percent of the stream for every layer past 0. At std 1 the identity signal stays comparable to the writes throughout the budget, which is what Inkling's embedding norm and the speedrun's large embedding learning rate also buy.\nPREDICTION: No parameter or step-time change. Initial loss within 0.2 of the baseline's. Faster descent in the first 200 steps and lower loss on rare tokens, whose identity otherwise fades deepest in the stack.\nTEST: Sweep embedding std over 0.3 and 1.0 and final gain init over 0.02, 0.05 and 0.1 in 45-step matched-seed runs. Check the first-step loss is under 11.5.\nSOURCE: own\nTARGET: loss on rare tokens: down\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Depth-indexed gain init\nMECHANISM: Initialize the MLP-side pre-norm gain of block l at (l plus 1) to the power minus alpha, leaving attention gains at 1 because QK-norm makes the attention path scale-free apart from values. This tests the brief's open item on LayerNorm Scaling under mixing weights. In this recipe the scaling collapses to a gain init: the gain is learned, so a fixed multiplier is only a starting point, and the paper's bad interaction with scaled init is moot since Muon erases that init. Deep MLPs then write less at the start, so depth-wise variance growth slows and the gain learns the right level under Adam.\nPREDICTION: No parameter or step-time change. Residual RMS at block 11 lower at step 45. Loss within 0.01 of the baseline early and slightly below it late.\nTEST: Sweep alpha over 0.25 and 0.5 and apply to MLP gains only versus both gains, in 45-step matched-seed runs with block-11 stream RMS logged.\nSOURCE: https://arxiv.org/html/2502.05795v3\nTARGET: residual RMS growth: down\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 31219,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20259,
+  "total_tokens": 54907
+ },
+ "cost_usd": 2.908215,
+ "duration_ms": 465516,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 54907,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "beacon",
+  "note": "State across depth: normalization placement and initializati / outward / research",
+  "node": "depth_norm_init",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46381,
+ "raw": {
+  "duration_api_ms": 464228,
+  "stop_reason": "end_turn",
+  "session_id": "47b49b6a-0e1a-429b-a2f2-5f3c365408ff",
+  "total_cost_usd": 1.96700675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20259,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 31219,
+   "output_tokens_details": {
+    "thinking_tokens": 26404
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20259,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 31219,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20259,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20259
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 31219,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20259,
+    "webSearchRequests": 0,
+    "costUSD": 1.96700675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 26404,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 464329,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 31219,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20259,
+    "total_tokens": 54907
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 31219,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20259,
+    "total_tokens": 54907
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,110 @@
+{
+ "call_id": "c27f6d1eb92",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll draft seeds, then write the sketches for the input/output part of nano/train.py.\n\nPASS 1 (scratch):\n1. Readout is the plain stream mean: subtract the input embedding, since the tied skip path computes similarity, not succession.\n2. All rows are tied: tie by frequency, untied zero-init delta rows for the most frequent tokens only.\n3. A logit is a raw dot product with a row: cosine with the row plus an explicit unigram bias, so row norm serves the input side only.\n4. The final norm discards per-token magnitude: keep log-RMS as a confidence temperature on the logits.\n5. The four streams start as copies: stream k carries the embedding of token t-k.\n6. The tied table gets one summed gradient: scale the input-side contribution (open item).\n7. The head reads the last layer only: average a mid-depth readout into the final one.\n8. One flat 384-wide table: rare ids get a 64-wide factorized table, freeing budget.\n9. Uniform cross entropy: weight tokens by inverse square-root frequency (changes the trained objective; dropped).\n10. Static stream readout: per-token dynamic softmax gate over the four streams.\n11. No sink: a padding id (50257..50303) becomes a learned null logit that absorbs mass.\n12. Embedding is a bare lookup: RMSNorm after lookup so frequency-driven row norms do not set the input scale.\nKept five leaps (quota is four): 5, 4, 1, 2, 3. Seeds 6 and 12 become a tune and a port.\n\nIDEA: Readout minus the input token (cancel the similarity prior)\nMECHANISM: The script's skip path carries e_t to the output and the head is E, so the direct path's logits are E Eᵀ e_t: a symmetric form that scores tokens similar to the current one, not ones that follow it. At init the self-token logit is about 7.7 against noise of 0.4, and the near-identity Sinkhorn mixing keeps e_t dominant, so every block must first learn to cancel it; the readout becomes mean(streams) minus λ·e_t with a learned scalar λ starting at 1, so the head reads only what the blocks wrote.\nPREDICTION: Loss falls faster in the first 100 steps because the branch writes reach the head at full scale after the final norm; no parameter or memory change; step time unchanged. Final loss 0.01 to 0.02 lower if the prior is costly, zero effect if λ is learned to 0.\nTEST: At init, print logit of the current token versus the mean max logit (baseline shows the 7.7 gap, variant shows none); then a 45-step matched smoke run on the same seed.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The head should read the raw residual including the input embedding; here the input embedding is removed from the readout.\nKEEPS: Tied table, four-stream mean, final RMSNorm, plain cross entropy.\nP_SUCCESS: 0.15\nKILL: Mean loss over steps 41 to 45 not at least 0.05 below the baseline's at the same steps.\n\nIDEA: Frequency-split tying (untie only the frequent rows)\nMECHANISM: The brief says the tied matrix ends up output-shaped because output gradients dominate, and that rare rows (loss 11.6 nats at rank 10k+, which equals the unigram cost) only learn frequency, so they are the rows tying protects. Setting \"the two sides conflict most where both gradients are large\" as an identity means the conflict lives in the frequent rows; add a zero-initialised 4096 x 384 delta that is added to the logits of ids below 4096 in place (GPT-2 merge order is frequency order), leaving all other rows tied.\nPREDICTION: Non-embedding params 22.82M (7.4 percent over, inside C3); step time up under 4 percent; loss curve matches the baseline for the first 50 steps then pulls ahead, with the delta rows' cosine to E drifting toward the 0.72 to 0.53 split the paper reports.\nTEST: Build-only parameter count, 3-step timing, then a 45-step matched smoke run; afterwards compare per-token loss for ids below and above 4096.\nSOURCE: own, builds on https://arxiv.org/pdf/2603.26663 and the modded-nanoGPT untie record https://github.com/KellerJordan/modded-nanogpt\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Tying is all-or-nothing across the vocabulary; here the tie is decided per row by frequency.\nKEEPS: Tied lookup for every row, same head, same loss, same optimizer groups (the delta is a 2-D matrix under Muon).\nP_SUCCESS: 0.18\nKILL: Mean loss over steps 41 to 45 above the baseline's by more than 0.02, or any step slower than 5.0s.\n\nIDEA: Direction-only tied head with a counted unigram bias\nMECHANISM: The brief's centering paper identifies output anisotropy, and the rare-token loss equals the unigram cost; literalise \"row norm equals log frequency\" and the consequence is that the tied table spends its norm, which the input lookup also sees, on a quantity a bias can hold. Logits become g·norm(x)·(E/‖E‖_row)ᵀ + b, with b initialised to log counts from one train shard (stored as a parameter so the exam sees it) and g a learned scalar starting at the baseline row norm.\nPREDICTION: Step-1 loss near 7.5 instead of 10.8; parameters up by 50,305; no extra logits copy because the bias fuses into the matmul; step time unchanged; rare-token loss falls because their directions are trained without norm pressure.\nTEST: Step-1 loss readout, then a 45-step matched smoke run; falsified if the head start vanishes by step 45.\nSOURCE: own, builds on https://arxiv.org/html/2601.02031v1\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A logit is a raw inner product with a shared row whose norm encodes frequency; here the output side sees only direction and frequency lives in a bias.\nKEEPS: Tied directions, stream mean, final norm, cross entropy, optimizer split.\nP_SUCCESS: 0.15\nKILL: Mean loss over steps 41 to 45 not at least 0.10 below the baseline's.\n\nIDEA: Residual magnitude as confidence temperature\nMECHANISM: The brief notes residual RMS grows 7.8x through depth and the final RMSNorm sets the softmax temperature to a constant; literalise \"RMSNorm equals a temperature of 1/RMS\" and the consequence is that per-token magnitude, the sum of how strongly twelve blocks wrote, is a confidence signal thrown away and re-encoded in direction. Scale the normed vector by 1 + α·log(RMS(x_t)/RMS_ref) before the head, α a learned scalar starting at 0.\nPREDICTION: Identical to baseline at step 1; per-token RMS spread widens over training as α moves away from 0; no parameter or memory cost since the scale is applied to the 384-wide vector, not the logits.\nTEST: Correlate per-token final RMS with per-token loss on a smoke batch at step 45 (no correlation kills it before training the variant); then a 45-step matched smoke run.\nSOURCE: own\nTARGET: residual RMS growth, spread across tokens up\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The final norm should erase per-token magnitude; here magnitude sets the logit temperature.\nKEEPS: Tied head, stream mean, RMSNorm direction, cross entropy.\nP_SUCCESS: 0.10\nKILL: |α| below 0.01 at step 45, or loss above the baseline's by more than 0.02.\n\nIDEA: History-carrying streams\nMECHANISM: Four identical input streams carry no more than one, so 3/4 of the input width is redundant; stream k is initialised with e(x_{t-k}) for k=1..3 (padded with the current token at the window start), giving layer 1 a bigram and trigram for free, which the brief says is what weak early layers under tying miss. The final readout becomes a learned softmax over streams initialised on stream 0 so the head does not see a bag of past tokens.\nPREDICTION: 4 readout parameters; activations up 12 MB; step time within 1 percent; loss at steps 10 to 45 clearly below baseline because local context exists before any attention has trained; risk is the uniform block read averaging four tokens' embeddings.\nTEST: 45-step matched smoke run; also inspect read_logits after 45 steps to confirm block 1 shifts toward stream 0.\nSOURCE: own, inverts the value-embedding re-injection in https://github.com/KellerJordan/modded-nanogpt\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: All four streams start as copies of one token's embedding; here they start as a four-token history.\nKEEPS: One tied table, Sinkhorn mixing, block structure, final norm and loss.\nP_SUCCESS: 0.08\nKILL: Mean loss over steps 41 to 45 not at least 0.05 below the baseline's.\n\nIDEA: Input-side gradient amplification on the tied table\nMECHANISM: The open item in the brief: output gradients dominate the tied matrix, so multiply the input-side gradient by g with the value-preserving trick (g·e minus (g-1)·e.detach()). AdamW normalises the summed gradient, so scaling one side changes the update direction rather than its size, which is why it is not a no-op.\nPREDICTION: No parameter, memory or time change; loss curve diverges from baseline only after a few hundred steps; sweep g in {2, 4, 8}, expecting a gain of 0.005 to 0.01 at g=4 and a loss at g=8.\nTEST: 45-step matched smoke runs at g=4 and g=8 to check neither diverges; the final answer needs the full budget.\nSOURCE: https://arxiv.org/pdf/2603.26663\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: RMSNorm after the embedding lookup\nMECHANISM: Inkling normalises the embedding directly after lookup; with a tied table the output pressure inflates frequent rows, so the input scale becomes frequency-dependent and the branch writes are dwarfed for frequent tokens. A 384-gain RMSNorm after lookup fixes the input scale to the write scale regardless of row norm.\nPREDICTION: 384 extra parameters; step time unchanged; residual RMS growth through depth drops below 7.8x; small loss gain of 0.003 to 0.006.\nTEST: 45-step matched smoke run and a print of per-layer residual RMS at step 45 against the baseline.\nSOURCE: https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html\nTARGET: residual RMS growth, down\nSCOPE: validation loss at 1024\nKIND: port",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 17710,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20877,
+  "total_tokens": 42016
+ },
+ "cost_usd": 1.839855,
+ "duration_ms": 272602,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 42016,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "apple",
+  "note": "Inputs and outputs: tied embedding, stream read-out, logits / outward / research",
+  "node": "io_embed_head",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 48321,
+ "raw": {
+  "duration_api_ms": 271159,
+  "stop_reason": "end_turn",
+  "session_id": "cccbaf97-eb70-45c3-8bae-e414b754ec7b",
+  "total_cost_usd": 1.30391675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20877,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 17710,
+   "output_tokens_details": {
+    "thinking_tokens": 13863
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20877,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 17710,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20877,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20877
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 17710,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20877,
+    "webSearchRequests": 0,
+    "costUSD": 1.30391675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 13863,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 271262,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 17710,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20877,
+    "total_tokens": 42016
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 17710,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20877,
+    "total_tokens": 42016
+   },
+   "source": "usage"
+  }
+ }
+}

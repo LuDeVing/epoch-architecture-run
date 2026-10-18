@@ -1,0 +1,120 @@
+{
+ "call_id": "c4eeb21a5e3",
+ "role": "research",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n{\n  \"known\": [\n    {\n      \"name\": \"Head-specific sigmoid gate on SDPA output (Gated Attention, Qwen)\",\n      \"mechanism\": \"Multiply each head's SDPA output elementwise by sigmoid(X·Wθ), computed from the layer input, before the output projection.\",\n      \"effect\": \"Across 30 variants, this gate gave consistent gains over the baseline. It also improved training stability, tolerated larger learning rates, cut massive activations and attention sinks, and improved long-context extrapolation. A blog write-up reports first-token attention falling from 46.7% to 4.8%; that figure is not from the paper. Qwen3-Next uses this gate.\",\n      \"where\": \"15B MoE and 1.7B dense models, 3.5T tokens\",\n      \"url\": \"https://arxiviq.substack.com/p/neurips-2025-gated-attention-for\"\n    },\n    {\n      \"name\": \"Sparse per-head attention gate on 12 residual channels (modded-nanoGPT speedrun)\",\n      \"mechanism\": \"Each head's output gets a sigmoid gate fed only by the first 12 dimensions of the residual stream, which is a very cheap gate.\",\n      \"effect\": \"Part of the speedrun record sequence that cut the world-record time by about 20%. The write-up says it speeds up updates and reduces BOS attention-sink behavior. No isolated number was found.\",\n      \"where\": \"GPT-2-small-scale speedrun, ~124M\",\n      \"url\": \"https://www.greaterwrong.com/posts/j3gp8tebQiFJqzBgg/how-the-nanogpt-speedrun-wr-dropped-by-20-in-3-months\"\n    },\n    {\n      \"name\": \"Value embeddings with per-head gate (speedrun and nanochat)\",\n      \"mechanism\": \"Extra token embeddings are mixed into attention values, often on alternating layers. The nanochat variant gates them per head from the first 32 input channels with a 2·sigmoid range.\",\n      \"effect\": \"Adopted as speedrun record 14 (4.41 min). No isolated loss delta found.\",\n      \"where\": \"modded-nanoGPT and nanochat, ~124M and larger\",\n      \"url\": \"https://github.com/KellerJordan/modded-nanogpt\"\n    },\n    {\n      \"name\": \"Long-short sliding-window attention pattern\",\n      \"mechanism\": \"Alternate short-window and long-window layers, with window-size warmup and YaRN, instead of full context everywhere.\",\n      \"effect\": \"Part of record 16 (3.80 min), together with a separate block mask. Gemma 3 uses 5:1 local-to-global with a 1024 window. A secondary summary says the ablation found only a slight perplexity cost.\",\n      \"where\": \"modded-nanoGPT ~124M; Gemma 3 at large scale\",\n      \"url\": \"https://sebastianraschka.com/llm-architecture-gallery/swa/\"\n    },\n    {\n      \"name\": \"Value Residual Learning (ResFormer / SVFormer)\",\n      \"mechanism\": \"Add a residual path from the first layer's value vectors to the values of every later layer. SVFormer shares the first layer's values across all layers.\",\n      \"effect\": \"Matches baseline validation loss with about 16% fewer parameters and about 20% less data. SVFormer roughly halves the KV cache at a small cost.\",\n      \"where\": \"Language models of roughly 82M to 1.6B parameters\",\n      \"url\": \"https://arxiv.org/html/2410.17897v4\"\n    },\n    {\n      \"name\": \"NormFormer HeadScale\",\n      \"mechanism\": \"Scale each head's output by a learned scalar, initialized at 1, before the output projection. Combined with extra norms to balance gradient magnitudes between early and late layers.\",\n      \"effect\": \"The paper reports better pretraining quality with negligible parameters. The stated aim is to shrink early-layer gradients and raise late-layer gradients.\",\n      \"where\": \"125M to 2.7B\",\n      \"url\": \"https://arxiv.org/pdf/2110.09456\"\n    },\n    {\n      \"name\": \"Grouped low-rank output projection (DeepSeek-V4)\",\n      \"mechanism\": \"Split head outputs into groups, project each group to a smaller intermediate dimension, then combine and project to the hidden size.\",\n      \"effect\": \"Reduces the cost of projecting a huge concatenated head output to d_model. This is a cost saving, not a loss gain. Group counts come from secondary sources (e.g. 128 heads, 16 groups, 1024 intermediate).\",\n      \"where\": \"DeepSeek-V4 Pro scale\",\n      \"url\": \"https://arxiv.org/pdf/2606.19348\"\n    },\n    {\n      \"name\": \"MLA vs MHA vs GQA vs GTA/GLA at fixed query-head count\",\n      \"mechanism\": \"Compare KV-sharing schemes (MHA, GQA-4, MQA, GTA, MLA, GLA) with FFN width and 12 query heads held fixed.\",\n      \"effect\": \"MLA had the best average perplexity (40.80), ahead of MHA (41.94) and GQA-4 (44.16), but at 181M parameters versus 174M for GQA-4, so it is not parameter-matched.\",\n      \"where\": \"188M-parameter models\",\n      \"url\": \"https://arxiv.org/pdf/2505.21487\"\n    },\n    {\n      \"name\": \"Differential attention\",\n      \"mechanism\": \"Subtract two softmax attention maps to cancel common-mode noise and sparsify attention.\",\n      \"effect\": \"Original paper claims gains across sizes and token counts. A follow-up at 125M reports about +0.7% average downstream accuracy for DIFF, with the top-half-of-layers variant slightly better than all layers.\",\n      \"where\": \"125M (follow-up); original paper's range\",\n      \"url\": \"https://arxiv.org/pdf/2508.18387\"\n    },\n    {\n      \"name\": \"Talking-heads attention\",\n      \"mechanism\": \"Learned linear mixing across the head dimension of the attention logits, before and after the softmax.\",\n      \"effect\": \"Better masked-LM perplexity and better transfer to downstream tasks, with modest extra compute.\",\n      \"where\": \"T5-style models\",\n      \"url\": \"https://arxiv.org/pdf/2003.02436\"\n    }\n  ],\n  \"failed\": [\n    {\n      \"name\": \"Shrinking the QK dimension below head_dim 64\",\n      \"why\": \"A Pythia-160M ablation found severe degradation when the query-key dimension was reduced below 64, even at fixed parameter budget. Very small heads are a bottleneck, which argues against many smaller heads.\",\n      \"url\": \"https://arxiv.org/pdf/2504.20938\"\n    },\n    {\n      \"name\": \"Changing head count at fixed hidden size (PanGu-π Pro)\",\n      \"why\": \"The authors report that head count and head dimension (they use 128) do not noticeably affect speed or accuracy when hidden size is fixed. This suggests head-split tuning may be near-neutral.\",\n      \"url\": \"https://arxiv.org/pdf/2402.02791\"\n    },\n    {\n      \"name\": \"Aggressive KV sharing via GQA-4 at small scale\",\n      \"why\": \"At 188M, GQA-4 was clearly worse than MHA and MLA (average perplexity 44.16 versus 41.94 and 40.80). Plain KV-head reduction is not free, so it is a cost-saving move rather than a quality one.\",\n      \"url\": \"https://arxiv.org/pdf/2505.21487\"\n    }\n  ],\n  \"open\": [\n    {\n      \"direction\": \"Test head-dimension sweeps (3×128, 12×32, 6×64) at 384 width with a latent-attention KV path. No controlled sweep for a latent-attention model of this size was found.\",\n      \"why\": \"The evidence is mixed: tiny QK dimensions hurt, while 128 looks neutral or better. The penalty from small heads is said to shrink with model size, so results at 21M may not transfer.\",\n      \"url\": \"https://arxiv.org/pdf/2609.25802\"\n    },\n    {\n      \"direction\": \"Combine a cheap sparse per-head gate on the SDPA output with the output projection, and check whether it removes the 10x layer-0 gradient imbalance.\",\n      \"why\": \"The gate is known to reduce attention sinks and stabilize training, and HeadScale targets the early-layer gradient imbalance. Their interaction with QK-norm and four-stream residual mixing has not been reported.\",\n      \"url\": \"https://arxiv.org/pdf/2110.09456\"\n    },\n    {\n      \"direction\": \"Per-layer heterogeneous windows with stochastic window sizes during training, rather than full context in every layer.\",\n      \"why\": \"SWAX found that short windows mixed with global layers work best and that stochastic window sizing helps. That was tested with recurrent layers at 1.4B and 7B, not in a pure-attention small model.\",\n      \"url\": \"https://arxiv.org/pdf/2509.24552\"\n    },\n    {\n      \"direction\": \"Grouped or low-rank output projection as a regularizer or capacity reallocation at small width, saving wo parameters for other uses.\",\n      \"why\": \"DeepSeek-V4 uses it for efficiency at huge head counts. Nobody reported whether it costs or helps quality when the head output is only 384-dimensional.\",\n      \"url\": \"https://arxiv.org/pdf/2606.19348\"\n    },\n    {\n      \"direction\": \"Apply differential or other noise-cancelling attention only to some layers (e.g. the top half), possibly paired with fewer, larger heads.\",\n      \"why\": \"The 125M follow-up found the top-half-only variant slightly better than all layers, but it has not been tested with latent attention or at the 21M scale.\",\n      \"url\": \"https://arxiv.org/pdf/2508.18387\"\n    }\n  ],\n  \"queries\": [\n    \"gated attention per-head sigmoid gate after SDPA output Qwen \\\"Gated Attention for Large Language Models\\\"\",\n    \"modded-nanoGPT speedrun record log attention heads value embeddings sliding window per-head gate\",\n    \"number of attention heads head dimension small language model ablation head_dim 64 vs 128 fewer larger heads\",\n    \"differential transformer attention noise cancellation heads small scale results\",\n    \"Multi-head Latent Attention MLA vs GQA ablation head count small model 2025 arXiv\",\n    \"hybrid sliding window global attention layers ratio small LM ablation per-layer window sizes 2025\",\n    \"talking-heads attention OR head mixing OR \\\"collaborative attention\\\" OR \\\"mixture of attention heads\\\" language model results\",\n    \"value residual learning ResFormer value embeddings attention small transformer improvement\",\n    \"per-head output norm OR \\\"head-wise normalization\\\" attention output projection gradient norm layer 0 transformer 2025 2026\",\n    \"DeepSeek-V4 attention architecture compressed sparse attention heads output projection grouped\"\n  ]\n}\n```",
+ "usage": {
+  "input_tokens": 135589,
+  "output_tokens": 14478,
+  "cache_read_input_tokens": 19514,
+  "cache_creation_input_tokens": 16287,
+  "total_tokens": 185868
+ },
+ "cost_usd": 0.690867,
+ "duration_ms": 50055,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 4000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 185868,
+ "over_cap": true,
+ "meta": {
+  "card": "research",
+  "operator": "attn_heads_outpu",
+  "note": "web search: Sequence mixing: head count, head structure and output proje"
+ },
+ "prompt_chars": 3314,
+ "raw": {
+  "duration_api_ms": 104612,
+  "stop_reason": "end_turn",
+  "session_id": "07d204c4-bd4d-4329-904c-60b70cf591cb",
+  "total_cost_usd": 0.23369870000000004,
+  "usage": {
+   "input_tokens": 6,
+   "cache_creation_input_tokens": 16287,
+   "cache_read_input_tokens": 19514,
+   "output_tokens": 4820,
+   "output_tokens_details": {
+    "thinking_tokens": 86
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 16287,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 3719,
+     "cache_read_input_tokens": 13014,
+     "cache_creation_input_tokens": 5080,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 5080
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 6,
+    "outputTokens": 4820,
+    "cacheReadInputTokens": 19514,
+    "cacheCreationInputTokens": 16287,
+    "webSearchRequests": 0,
+    "costUSD": 0.11531140000000001,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 86,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   },
+   "claude-haiku-5-5": {
+    "inputTokens": 135583,
+    "outputTokens": 9658,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 10,
+    "costUSD": 0.11838730000000001,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 2342,
+    "canonicalModel": "claude-haiku-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 11,
+  "duration_ms": 48636,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 6,
+    "output_tokens": 4820,
+    "cache_read_input_tokens": 19514,
+    "cache_creation_input_tokens": 16287,
+    "total_tokens": 40627
+   },
+   "model_usage_sum": {
+    "input_tokens": 135589,
+    "output_tokens": 14478,
+    "cache_read_input_tokens": 19514,
+    "cache_creation_input_tokens": 16287,
+    "total_tokens": 185868
+   },
+   "source": "modelUsage"
+  }
+ }
+}

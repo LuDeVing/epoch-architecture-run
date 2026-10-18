@@ -1,0 +1,105 @@
+{
+ "call_id": "cf318f02147",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Shifted-key induction heads\", \"members\": [\"s9672073260\", \"s8302812320\", \"s40dab6db58\", \"sc21d6f35ef\"]},\n  {\"name\": \"Per-head output gating\", \"members\": [\"s22ef52ba6b\", \"s0ab97a5c0e\"]},\n  {\"name\": \"Latent-value heads with per-head rank-128 output\", \"members\": [\"se7dbbff80d\"]},\n  {\"name\": \"Re-query second hop with shared K/V\", \"members\": [\"sccd3b774dd\"]},\n  {\"name\": \"Two-depth keys (previous layer K/V)\", \"members\": [\"se8e7ae41f1\"]},\n  {\"name\": \"Learned attention sink key\", \"members\": [\"s87a5de12d1\"]},\n  {\"name\": \"Three heads of 128\", \"members\": [\"s42e96f80d8\"]},\n  {\"name\": \"Predecessor-gated MLP\", \"members\": [\"s545c7c8c3a\"]},\n  {\"name\": \"Shifted-key pointer logits copy mechanism\", \"members\": [\"sf23c585ac6\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 732,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2381,
+  "total_tokens": 4683
+ },
+ "cost_usd": 0.020385,
+ "duration_ms": 7425,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 4683,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_heads_outpu/outward, 13 sketches"
+ },
+ "prompt_chars": 4985,
+ "raw": {
+  "duration_api_ms": 6074,
+  "stop_reason": "end_turn",
+  "session_id": "fe1099aa-89f0-450d-b250-c5cc636aa28b",
+  "total_cost_usd": 0.0170048,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2381,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 732,
+   "output_tokens_details": {
+    "thinking_tokens": 361
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2381,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 732,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2381,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2381
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 732,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2381,
+    "webSearchRequests": 0,
+    "costUSD": 0.0170048,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 361,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 6137,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 732,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2381,
+    "total_tokens": 4683
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 732,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2381,
+    "total_tokens": 4683
+   },
+   "source": "usage"
+  }
+ }
+}

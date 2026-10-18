@@ -1,0 +1,108 @@
+{
+ "call_id": "c0869810e11",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- **Conv on V corrupts the copied token.** An induction head attends to position j, the token after the earlier occurrence, and copies v_j. With the conv on v, v_j becomes a mix of v_j, v_{j-1}, v_{j-2} and v_{j-3}, so the head copies a smear of the matched context instead of the next token. The gain on keys is then cancelled on values. Only keys need the shift (this is the Primer/RWKV lesson). Cheapest check: a 1000-step run with K-only conv against K+V conv, comparing recall-token loss. | severity: high | class: interaction_cancels | if_true: learn_z below 1.0 | link: L3\n- **Conv weight routed to Muon.** If the builder stores the taps as a 2-D (768,4) or (4,768) parameter, `build_optimizers` sends them to Muon. Newton-Schulz then orthogonalizes a 768x4 matrix, and the shape scale `max(1, 768/4)**0.5 ≈ 13.9` turns lr 0.02 into about 0.28 per step on taps of magnitude about 1. Muon's decay (0.1 × 0.02) also shrinks the identity tap every step. The result is tap thrash or the identity collapsing within tens of steps, which shows as a loss spike after warmup rather than at step 45. Cheapest check: print which optimizer owns the conv param and log the lag-0 tap at steps 50 and 200. | severity: high | class: impl_slip | if_true: trend above 0\n- **Effect is early-only.** The baseline has 12 layers, which is plenty to build a previous-token head plus an induction head within 1525 steps (50M tokens). Recall tokens are already easy at step 100 (4.475 vs 6.704). The conv only shortcuts the formation, so the step-300 gap the chain predicts shrinks to near zero by the end of the cooldown. Cheapest check: track the recall-token gap at steps 300, 800 and 1500; a monotonically shrinking gap means early-only. | severity: high | class: early_only | if_true: trend below 0 | link: L3\n- **Gain is too small for C7.** Recall tokens are 13% of targets. Even the chain's optimistic 0.05 nats on them, held to the end, is 0.0065 nats overall. That barely clears the 0.005 margin, and with 3 seeds a one-sided Welch test at p<0.01 needs the effect to be about 3x the seed std. Seed std on this setup is likely about 0.003–0.008. Cheapest check: take recall gain × 0.13 at the final step of the 1000-step run and compare it with the baseline seed spread. | severity: high | class: below_noise | if_true: learn_z below 2.0 | link: L5\n- **Conv after QK-norm, or over the RoPE half.** \"Right before SDPA\" means k is already `cat([k_norm(k), rope(kr)])`. Convolving there has two problems:\n  - It un-normalizes the content keys. Summed taps change logit scale, which interacts with the max logits of 15–22 in layers 3–10.\n  - It mixes RoPE-rotated components from positions t-1 to t-3 into position t. That breaks the relative-position property the 32-dim shared `kr` exists to provide, and position-based heads degrade.\n\n  The conv belongs on the content k/v from `expand`, before `k_norm`, and never on `kr`. Cheapest check: look at where the conv sits in the code, then at the max attention logit per layer at step 300 against the baseline. | severity: medium | class: impl_slip | if_true: fidelity below 0.5\n- **Non-recall tokens pay.** Layer 0 has near-flat entropy (0.957) and takes 10x the attention gradient of the other layers. The conv gives layer 0 a cheap local n-gram smoother, and its large gradient will pull the taps toward local averaging that serves bigram statistics rather than induction. Smeared keys also make exact-token matching in later layers less sharp, which raises loss on the 87% of non-recall tokens. Cheapest check: non-recall loss at matched steps, and the layer-0 lag-1 tap compared with the layer 4–8 taps. | severity: medium | class: interaction_cancels | if_true: long_z below 0 | link: L5\n- **Redundant with the 4-stream mixing.** The static Sinkhorn residual streams already let early layers write previous-token features into separate streams, which later reads can pick up. The marginal value of a kv conv is lower here than in a plain residual network, so the taps stay near identity (the L1 kill condition). Cheapest check: lag≥1 tap magnitudes at step 300; if all are below 0.05, the mechanism is unused. | severity: medium | class: interaction_cancels | if_true: learn_z below 1.0 | link: L1\n- **Hidden VRAM and step cost.**\n  - Memory: `F.conv1d` needs a (B,C,T) layout, so there is a transpose/contiguous copy plus left padding. That saves roughly 3 extra (4,1024,768) bf16 activations per layer, about 0.2–0.3 GB over 12 layers. The baseline already sits close to the limit (micro_batch 8 spilled past 6 GB), so this can cross 5.6 GB.\n  - Time: the conv is unfused, and the extra transposes cost more than 3%.\n\n  Cheapest check: `--smoke-steps 3` peak_vram_gb and step time. | severity: medium | class: hidden_cost | if_true: step_ratio above 1.05\n- **The test is blind to the outcome it needs.** With identity init, the step-45 parity kill check passes trivially. The target metric, recall-token loss, can improve while the exam val_loss does not, and the kill rule never looks at the overall loss or the end-of-run trend. Cheapest check: add overall loss at step 1000 and the late-position-minus-early-position gap (L4) as gating metrics. | severity: medium | class: metric_blind | if_true: none\n- **Wrong conv type blows the parameter budget.** A builder who uses a dense `nn.Conv1d(768, 768, 4)` instead of `groups=768` adds about 2.36M parameters per layer, breaking C3 and the time budget. Applying it to `qc` as well as kv also inflates the count. Cheapest check: `--build-only` non-embedding count. | severity: low | class: breaks_constraint | if_true: param_ratio above 1.10\n- **Weight decay erodes the taps.** If the taps are not delta-parameterised and go through AdamW, weight decay of 0.1 at lr 3e-3 slowly pulls the lag-0 identity tap below 1 through the cooldown. That is a small, steady key/value shrink compared with the baseline, which matters with QK-norm absent on v. Cheapest check: log the lag-0 tap mean at the final step. | severity: low | class: impl_slip | if_true: fidelity below 0.8\n\nVERDICT: The conv shortcuts an induction circuit that the 12-layer baseline builds on its own within the first few hundred steps, and the conv on V blurs exactly the token being copied. Any recall gain on 13% of tokens fades by the end of the cooldown to well under 0.005 nats overall, inside the noise of 3 seeds.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 4455,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12669,
+  "total_tokens": 18694
+ },
+ "cost_usd": 0.574051,
+ "duration_ms": 48864,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 18694,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "attn_heads_outpu-in-k01",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Short causal conv on keys/values'",
+  "node": "attn_heads_outpu"
+ },
+ "prompt_chars": 28691,
+ "raw": {
+  "duration_api_ms": 47615,
+  "stop_reason": "end_turn",
+  "session_id": "b66e6ad4-89bd-42cc-a885-607ff87fe183",
+  "total_cost_usd": 0.1907736,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12669,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 4455,
+   "output_tokens_details": {
+    "thinking_tokens": 1982
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12669,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 4455,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12669,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12669
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 4455,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12669,
+    "webSearchRequests": 0,
+    "costUSD": 0.1907736,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 1982,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 47717,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 4455,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12669,
+    "total_tokens": 18694
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 4455,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12669,
+    "total_tokens": 18694
+   },
+   "source": "usage"
+  }
+ }
+}

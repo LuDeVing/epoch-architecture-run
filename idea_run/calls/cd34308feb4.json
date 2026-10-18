@@ -1,0 +1,110 @@
+{
+ "call_id": "cd34308feb4",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Writing the sketches now: a scratch pass with the gap arithmetic and twelve seeds, then seven sketches (four leaps, two ports, one tune), two of them built from the gradient anomaly rows.\n\nPASS 1 (scratch):\n\nGap arithmetic for the existence operator: at 50M tokens a dense model twice this size is worth about 0.10 to 0.15 nats (loss exponent near 0.07 in parameters, loss sitting roughly 1.7 nats above the floor). A third of that is 0.035 to 0.05 nats, seven to ten times the 0.005 win bar. Two percent step time is about 0.1 s, which rules out any new 1024x1024 pass and any new d_model x d_model matmul; it allows 384x6 or 384x32 projections, biases, and rotations of 32-dim slices.\n\nThree mechanisms that could be it, and what must be true at 45 matched steps:\n- A content-free positional prior (seeds 1 and 2): the late-minus-early position gap, +0.46 nats at step 100 in the baseline, must already be halved.\n- A distance-aware readout (seed 3): recall-token loss must separate from the rest faster than the baseline's 4.48 vs 6.70.\n- Per-key salience that QK-norm throws away (seed 4): max logits must fall while entropy drops at least as fast.\n\nTwelve seeds, each breaking one rule:\n1. Position can never attend by itself: add constant vectors to the rotary query and key so their product is a per-head 16-term Fourier bias in relative distance.\n2. The query's positional phase is its index: rotate the rotary query by a content-predicted lag so a token chooses how far back to look.\n3. Values are position-blind: rotate half of each value head by RoPE and un-rotate the output, so the readout encodes the offset of what was read.\n4. QK-norm discards key magnitude: feed log of the pre-norm key RMS back in as a per-key additive logit.\n5. The rotary key depends on this token only: build it from this token and the previous one so induction forms in one layer. (Inkling's conv, a port; dropped.)\n6. Every layer sees every frequency: mask rotary pairs by depth. (Breaks the fixed-theta assumption; dropped.)\n7. A token may attend to itself: mask the diagonal. (Needs a null key, which is a sink; dropped.)\n8. One softmax over content plus position: a per-head convex mix of a content softmax and a position-only softmax sharing values. (Close to seed 1; dropped.)\n9. Position counts tokens: replace the index with a learned content clock. (CoPE, a port; dropped.)\n10. Queries are compared raw: centre each query by the per-head running mean (centring keys is a softmax no-op, centring queries is not). (Temperature-adjacent; dropped.)\n11. One wq under Muon for content and rotary slices: split it so the rotary slice gets its own orthogonalized update. (Touches wq, outside this part; dropped.)\n12. Content is normed, position is not: extend QK-norm to the rotary slices. (An extension of V4's norm, so written as a port.)\n\nKept as leaps: seeds 1, 2, 3, 4. Four rather than three so the quota is met; they are the farthest from the brief and from each other.\n\nIDEA: Fourier relative-position bias through the rotary channels, seeded local\nMECHANISM: Anomaly row: layer 0's attention gradient (0.29) is seven times what its neighbours predict (0.04), on three seeds. Rivals: (a) layer 0 does real work no other layer does, building the first positional and previous-token structure from raw embeddings; (b) measurement artifact: the gradient entering a branch through RMSNorm scales as one over the input stream RMS, and layer 0 sees a stream of RMS near 1 while layer 11 sees 10.9, so an unnormalized grad norm inflates layer 0 by about 8x regardless of information content; (c) the least popular: the gradient is dominated by the rotary slice of wq and the rotary projection, because RoPE gives zero positional logit unless content projections already agree, so a recency pattern must be learned through weight growth and the error signal for it is large and coherent at layer 0. If (c), give attention a content-free positional term: add a learned bias vector per head to the rotary query (6x32) and one shared bias to the rotary key (32). Their product after rotation is a 16-term Fourier series in relative distance per head, with the usual content-position cross terms on top. Initialize each head's query bias as a head-specific scalar times the key bias, with scalars log-spaced across heads, so at step 0 each head carries a kernel that peaks at distance zero and decays at a head-specific rate. This is the ALiBi-style prior the architecture lacks, obtained for free from the Fourier basis RoPE already provides, and the model can unlearn it. It holds at scale because the prior only speeds the formation of patterns every model learns anyway and costs 224 parameters per layer.\nPREDICTION: at step 100 the late-minus-early position gap falls from +0.46 to below +0.25; layer-0 attention grad norm moves toward 0.10; loss at 45 matched steps is at least 0.05 lower; final validation loss 0.01 to 0.03 lower; parameters +2,688; step time within noise.\nTEST: five-minute probe on the saved step-100 checkpoint: per-matrix grad norms inside layer-0 attention (content slice of wq, rotary slice of wq, rotary, compress, expand, wo), each also divided by the input stream RMS; if the rotary pieces carry most of the norm, (c) is live. Then a 45-step matched smoke run against the baseline on the same seed and data order.\nSOURCE: own\nTARGET: loss at late positions (down) and gradient norm spread (layer-0 attention cell down toward trend)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: attention logits are zero whenever either token's rotary content projection is zero, so position can only modulate content agreement and never attend on its own.\nKEEPS: RoPE angles and theta, the shared 32-dim key, QK-norm on content, the 1/sqrt(96) scale, causal full attention.\nP_SUCCESS: 0.2\nKILL: at 45 matched steps, loss not at least 0.02 below baseline, or the position gap not reduced by 0.10.\n\nIDEA: QK-norm extended to the rotary slices with learned gains\nMECHANISM: Anomaly row: layer 2's attention gradient (0.0259) is 0.0039 below what layers 1 and 3 predict, on three seeds. Rivals: (a) layer 2 is partly idle, its heads near bag-of-words (entropy 0.85) and redundant with layers 1 and 3; (b) measurement artifact: the neighbour predictor is linear, the attention grad curve is U-shaped with its true minimum at layer 2, so the extrapolator flags the bottom of a smooth curve; (c) the least popular: in shallow layers the content gains of q_norm and k_norm grow freely while the rotary slices' scale is a raw weight norm held down by Muon's unit-spectral updates and weight decay, so content logits saturate the softmax first and the gradient reaching the rotary pathway is squashed, stalling positional learning exactly where it should start. If (c), normalize the 32-dim rotary query per head and the shared rotary key with RMSNorm and learned gains, so positional temperature is a gain the optimizer sets directly instead of a weight norm it fights. At init with gain 1 the positional logit std is about 0.58 against 0.82 for content, near parity, versus 0.09 today. DeepSeek-V4 norms whole query heads for this reason; this carries the same treatment to the shared key's rotary part. Holds at scale because it removes an optimizer-architecture interaction, not a capacity gap.\nPREDICTION: on the probe, the positional share of logit variance in layers 1 to 3 rises from under 5 percent to over 20 percent by step 100; attention entropy in layers 1 to 3 falls 0.05 faster; final validation loss 0.005 to 0.015 lower; parameters +2,688; step time within noise.\nTEST: probe on the saved checkpoint: per layer, variance of the content logit (normed q and k) and of the rotary logit (qr and rotated kr) over a batch, plus the grad norm of the rotary slice alone; two minutes. Then 45-step matched smoke; sweep key-side init gain in {0.5, 1, 2}.\nSOURCE: https://arxiv.org/html/2606.19348v1\nTARGET: gradient norm spread (layer-2 attention cell up toward trend) and attention entropy in shallow layers (down)\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Key salience from the norm QK-norm discards\nMECHANISM: k_norm sets every key to RMS 1, so the compress-expand path has no way to make a token more attendable to all queries except by aligning it with many query directions, which pushes the norm gains up and produces the 22.7 max logits with entropy 0.67. Recover the discarded magnitude as one scalar per key: append a 97th dimension holding a learned per-head gain on the query side and the log of the pre-norm key RMS on the key side, so each key gets an additive query-independent logit. Gain initialized to zero reproduces the baseline exactly except for the 96 to 97 scale change. Salient tokens (rare words, delimiters, repeated bigram anchors) can then be made loud cheaply instead of through sharp content matches. Holds at scale because it is a one-scalar degree of freedom per key that frontier norms also throw away.\nPREDICTION: max attention logit falls from 22 toward 15 at equal or lower entropy; recall-token loss at step 100 improves from 4.48 to at most 4.40 with the rest unchanged; final validation loss 0.005 to 0.01 lower; parameters +72; step time within noise.\nTEST: 45-step matched smoke; record the learned gains and the correlation of the key scalar with token frequency rank on a checkpoint.\nSOURCE: own\nTARGET: max attention logit (down) and recall-token loss (down)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: key normalization treats per-token key magnitude as noise to be removed before the softmax.\nKEEPS: RMSNorm on content q and k, shared rotary key, SDPA scale on the (now 97-dim) concatenation, causal full attention.\nP_SUCCESS: 0.12\nKILL: at 45 matched steps, all head gains under 0.05 in magnitude, or loss not at least 0.01 below baseline.\n\nIDEA: Rotary values with un-rotated readout\nMECHANISM: Position currently decides which tokens are read and never changes what is read, so the attention output carries no trace of how far away the attended token was; a downstream layer cannot tell a copy from one position back from a copy from 300 back, which is exactly what induction needs. Rotate the first 32 of each head's 64 value dims by RoPE at the key position and rotate the same 32 output dims back by the query position before wo. The read-out of those 32 dims becomes the value rotated by the relative offset, so the MLP sees content and offset together; the other 32 dims stay position-clean for plain copying. Cost is two 32-dim rotations per head per token, the same as the rotary query. Holds at scale because it adds a mechanism, relative-offset-aware reading, that no head count or width supplies.\nPREDICTION: recall-token loss at step 100 improves from 4.48 to at most 4.30 with non-recall loss unchanged; final validation loss 0.005 to 0.015 lower; parameters unchanged; step time +1 percent.\nTEST: 3-step timing for the rotation overhead, then a 45-step matched smoke with recall-token and non-recall loss split out.\nSOURCE: own\nTARGET: recall-token loss (down)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: values are position-blind; relative position acts only on the attention weights and never on the vector that is read.\nKEEPS: RoPE angles and theta, shared rotary key, QK-norm, scale, causal full attention, half of every value head unrotated.\nP_SUCCESS: 0.12\nKILL: at 45 matched steps, recall-token loss not at least 0.03 below baseline's, or total loss above baseline.\n\nIDEA: Query-steered positional lag\nMECHANISM: The rotary query is rotated by the token's own index, so a token can only express \"where to look\" through content agreement. Add a 384-to-6 projection from the normed input giving one scalar lag per head, initialized to zero, and rotate each head's rotary query by minus that lag times each pair frequency before the standard rotation. The effective relative position becomes key index minus query index plus lag, so a query can say \"look about s tokens back\" with s chosen from content: one after an opening quote, a clause back after a comma. With the Fourier bias from the first sketch the kernel peak moves by s; alone it shifts the content-position cross term. Cost is a 384x6 matmul and one 32-dim rotation. Holds at scale because the lag is a learned positional primitive that larger models can only approximate with many content-matching heads.\nPREDICTION: lag distributions become multimodal by step 300 (mass near 1 and near 10 to 30); late-position loss gap shrinks by 0.1 at step 100; final validation loss 0.005 to 0.02 lower; parameters +27,648; step time +0.5 percent.\nTEST: 45-step matched smoke; dump the lag scalars on a batch and check their standard deviation across tokens per layer.\nSOURCE: own\nTARGET: loss at late positions (down)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: the query's positional phase is fixed to its token index and cannot depend on content.\nKEEPS: relative RoPE on the key side, shared rotary key, QK-norm, theta, scale, causal mask.\nP_SUCCESS: 0.08\nKILL: at 45 matched steps, lag standard deviation below 0.2 positions in every layer, or loss not at least 0.01 below baseline.\n\nIDEA: Post-attention sigmoid gate on the head outputs\nMECHANISM: Attention output goes straight to wo, so a head that has nothing useful to say for this token must still emit a convex mix of values and tends to dump mass on a fixed token, which is how sinks and the 22.7 max logits arise. A per-token sigmoid gate computed from the normed input (384 to 384, elementwise over the 6x64 head outputs) lets each head switch itself off per token. The 30-variant study behind Qwen3-Next found this placement best, with fewer sinks and better quality at under 2 percent latency. Parameters are 147k per layer, 1.77M total, inside the 2.12M headroom. Holds at scale because the frontier adopted it at 80B and up.\nPREDICTION: max attention logit falls below 18 in the deep layers; attention entropy in layers 6 to 10 rises 0.03 to 0.05 while loss falls; final validation loss 0.01 to 0.02 lower; parameters +1,769,472 (8.3 percent); step time +3 percent.\nTEST: build-only parameter count against the cap, 3-step timing, then a 45-step matched smoke.\nSOURCE: https://arxiv.org/abs/2505.06708 via https://sebastianraschka.com/llm-architecture-gallery/gated-attention/\nTARGET: max attention logit (down) and attention entropy in deep layers (up)\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Rotate the rotary slices in float32\nMECHANISM: apply_rope casts cos and sin to bf16 and rotates in bf16. Near 1, bf16 spacing is 2^-8, so the four or five lowest-frequency pairs cannot resolve neighbouring positions and every pair carries about 0.4 percent multiplicative noise into the relative-position logit. The slices are only 32 dims wide, so doing the rotation in float32 and casting after is free. Holds at scale because the same quantization error exists in every bf16 training run with low frequencies.\nPREDICTION: late-position loss gap shrinks by under 0.02; final validation loss 0.000 to 0.004 lower, below the win bar on its own but a stackable gain; parameters unchanged; step time within noise.\nTEST: 3-step timing and a 45-step matched smoke; compare the logit difference between bf16 and fp32 rotation on one checkpoint batch (a one-minute measurement).\nSOURCE: own\nTARGET: loss at late positions (down)\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 26437,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 19121,
+  "total_tokens": 48987
+ },
+ "cost_usd": 2.502895,
+ "duration_ms": 407383,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 48987,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:diagnosis",
+  "operator": "inward",
+  "seed": "",
+  "note": "Sequence mixing: decoupled rotary dims and QK-norm / inward / diagnosis",
+  "node": "attn_rope_norm",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 42764,
+ "raw": {
+  "duration_api_ms": 405952,
+  "stop_reason": "end_turn",
+  "session_id": "144b0ab9-adf6-4ee6-9b6a-8606cc5b7e34",
+  "total_cost_usd": 1.70514675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 19121,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 26437,
+   "output_tokens_details": {
+    "thinking_tokens": 20749
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19121,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 26437,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 19121,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 19121
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 26437,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 19121,
+    "webSearchRequests": 0,
+    "costUSD": 1.70514675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 20749,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 406058,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 26437,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19121,
+    "total_tokens": 48987
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 26437,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19121,
+    "total_tokens": 48987
+   },
+   "source": "usage"
+  }
+ }
+}

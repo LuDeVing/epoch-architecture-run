@@ -1,0 +1,112 @@
+{
+ "call_id": "c4ab40b1c47",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "PASS 1 (scratch):\n1. Unary key-salience term in the logits: breaks \"logits are purely bilinear in query and key\" (matching-market import).\n2. Query-norm gain scheduling of the softmax temperature: breaks \"QK-norm gives every query the same temperature\" (control import).\n3. Rotate values by position and un-rotate the output: breaks \"position enters only through the logits\" (Doppler import).\n4. Joint softmax over pairs of heads: breaks \"each head normalizes its attention mass independently\" (ecology import).\n5. Sinkhorn column-normalized attention: breaks \"a key may absorb unlimited mass\". Discarded: column sums over future queries leak the target.\n6. Chunk-summary extra keys: breaks \"one key per token\". Discarded: a long-context mechanism, no reason to help at 1024.\n7. Key dithering during training: breaks \"attention is deterministic at train time\". Discarded: single-epoch regime, regularization has no data to save.\n8. Token-frequency penalty on key logits: breaks \"logits are frequency-blind\". Discarded: token ids are not visible inside Attention.\n9. Entropy-shrunk output: breaks \"an unmatched query still emits a full-norm output\". Folded into the sink port below, which does the same thing.\n10. Multiplicative content x position logits: breaks \"content and position logits add\". Discarded: needs materialized logits, 600 MB over the memory cap.\n11. Shared-basis low-rank wo: breaks \"wo is dense\". Discarded: a cost saving with no loss mechanism at width 384.\n12. Head-asymmetric wo init: breaks \"heads start iid\". Discarded: Muon's fixed-norm update erases the init within about four steps.\n\nKept 1 to 4 as the four farthest from the brief, written in full below. Two facts shape the whole list. Under Muon every matrix gets an update of fixed norm, so the 10x layer-0 gradient imbalance changes directions only, and HeadScale-style fixes aim at a non-problem here. Training windows start at random offsets, so no consistent sink token exists, and the model must manufacture a sink from whatever token happens to come first.\n\nIDEA: Learned sink key per head, flash-kernel compatible\nMECHANISM: Prepend one learned 96-dim key per head with a zero value, plus a dummy zero query, run is_causal on T+1 and drop the first output row; query i then sees the sink and real keys 0..i. Mass that currently lands on the random first token moves to a key the model controls, and a query with no good match emits a shrunken output instead of a forced average.\nPREDICTION: Lower first-token attention mass and max logit from early training; loss curve slightly below baseline from about step 200; step time within 1 percent; parameters up by 6,912.\nTEST: 45 matched steps against the baseline on one seed for the curve, then one 3-step timing; parameter count by --build-only. Kill if steps 36-45 average more than 0.03 nats above baseline.\nSOURCE: https://arxiv.org/html/2601.02780v1\nTARGET: first-token attention mass, down; max attention logit, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Short causal conv on keys and values before SDPA\nMECHANISM: Depthwise causal conv, kernel 4, on the expanded k and v right before the SDPA call, initialized to the identity tap so step 0 equals the baseline. Keys that already carry the previous three tokens let an induction pattern form inside one layer instead of needing a previous-token head in an earlier layer.\nPREDICTION: Faster drop in recall-token loss after step 300; step time up under 3 percent; parameters up by 36,864 total.\nTEST: 45 matched steps for curve parity, then a 1000-step run watching recall-token loss; 3-step timing. Kill if timing exceeds 5.0 s or the curve is above baseline at step 45.\nSOURCE: https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html\nTARGET: recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Head split sweep with the shared latent\nMECHANISM: Set n_head to 3 with 128-dim heads, keeping the 128-dim latent and rotary width; the latent is already shared, so fewer wider heads trade head count for a wider match space at 15 percent fewer wq parameters. The Pythia ablation says small heads bottleneck while 128 is neutral or better, untested with latent attention.\nPREDICTION: Parameter count down by 442,368; step time within 5 percent either way; validation loss within 0.02 nats of baseline, with a chance of a small gain.\nTEST: --build-only for the count, 3-step timing, then 3 seeds at full budget comparing 3x128 against 6x64; also check 12x32 for one seed only as the expected loser. Sweep range: n_head in {3, 6, 12}.\nSOURCE: https://arxiv.org/pdf/2609.25802\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Unary key salience, a matching-market term in the logits\nMECHANISM: Shared structure: in two-sided matching the surplus of a pair is a bilinear match term plus a type-specific term for each side; our logit is q·k, the bilinear term only, and with no biases after QK-norm the model cannot say \"this token is worth attending whoever asks\" except through a hacked constant direction. Instantiation: append a constant 1 to each query and a learned per-head scalar c_h·k_j to each key, padded to a kernel-friendly width, so every key gets a query-independent salience. The correspondence breaks because market types are given while c_h is learned, and the sink key above is the same term on a virtual key.\nPREDICTION: Deep-layer attention entropy falls and the loss curve separates below baseline from about step 500; step time up under 8 percent from the wider head dim; parameters up by 4,608.\nTEST: 45 matched steps on one seed; kill rule below. Then a 3-step timing to confirm the padded head dim still hits the fused kernel.\nSOURCE: own\nTARGET: attention entropy in deep layers, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The logit for a query-key pair is purely bilinear, with no term that depends on the key alone.\nKEEPS: Softmax attention over the same keys, same heads, same latent path, same wo and residual.\nP_SUCCESS: 0.15\nKILL: Mean loss over steps 36-45 more than 0.05 nats above the baseline's same-step mean, or step time above 5.2 s.\n\nIDEA: Gain-scheduled temperature from the discarded query norm\nMECHANISM: Shared structure: in control, gain scheduling sets the controller gain from a measured operating variable instead of fixing it; QK-norm fixes the gain of every query and throws away the pre-norm query RMS, which in an unnormalized transformer is exactly the per-query temperature. Instantiation: multiply the normalized query by a gain exp(a_h(log rms_i - b_h)) clamped to [0.5, 2], with a_h starting at 0 so step 0 matches baseline. The correspondence breaks because the schedule is learned and the measured variable is itself trained, so a feedback loop can push RMS up to sharpen; the clamp bounds it.\nPREDICTION: Deep layers reach lower entropy on content tokens and higher on function tokens; loss curve below baseline after step 400; step time within 2 percent; parameters up by 144.\nTEST: 45 matched steps on one seed; log the mean gain per head to confirm it moves off 1. Kill rule below.\nSOURCE: own\nTARGET: attention entropy in deep layers, down; max attention logit, bounded by the clamp\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: After QK-norm every query attends at the same temperature regardless of how confident its pre-norm projection was.\nKEEPS: QK-norm itself, the same keys, heads, SDPA kernel and output path.\nP_SUCCESS: 0.15\nKILL: Mean loss over steps 36-45 more than 0.05 nats above baseline, or any gain pinned at a clamp edge for a whole head.\n\nIDEA: Value heterodyning, position carried on the payload\nMECHANISM: Shared structure: a transmitter modulates its payload onto a carrier at its own clock, the receiver demodulates at its clock, and the residual phase encodes the relative offset, which is how Doppler radar reads motion. Instantiation: rotate the slowest 16 of the 64 value dims by the key's position with the existing rope cache before SDPA, and inverse-rotate those dims of the output by the query's position, so the head's output carries R(j-i) v_j and wo can tell a copy from one token back from a copy from two hundred back. The correspondence breaks because the output sums many payloads whose phases interfere; a diffuse head loses those 16 dims to cancellation, which is why only 16 slow dims are rotated.\nPREDICTION: Recall-token loss drops earlier than baseline; loss at late positions improves slightly; step time within 2 percent; parameters unchanged.\nTEST: 45 matched steps for the kill rule; then a 1000-step run comparing recall-token loss with baseline. A unit check that rotating then un-rotating at the same position is the identity.\nSOURCE: own\nTARGET: recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Position information enters attention only through the logits; values and outputs are position-free.\nKEEPS: The same logits, mask, heads, kernel and wo; only 16 value dims get a zero-parameter rotation.\nP_SUCCESS: 0.12\nKILL: Mean loss over steps 36-45 more than 0.05 nats above baseline.\n\nIDEA: Shared attention budget across head pairs\nMECHANISM: Shared structure: in ecology, species sharing a limiting resource cannot coexist on the same niche, so coexistence forces niche partitioning; heads each get a full unit of attention mass per query, so nothing stops two heads from attending the same keys, and redundant heads are a known waste. Instantiation: group heads in pairs, build block-structured super-queries and super-keys so the two heads' logits enter one softmax over 2T keys, making the pair compete for one unit of mass per query. The correspondence breaks because selection here is instantaneous per query by gradient, not by reproduction over generations, and a head can be silenced for a token, which is a soft routing side effect.\nPREDICTION: Lower and more spread attention entropy across heads in deep layers; loss below baseline after step 500 if the mechanism works; step time up 10 to 30 percent from doubled score FLOPs and a boolean mask; parameters unchanged.\nTEST: 3-step timing first, kill above 7.5 s; then 45 matched steps on one seed. Check that per-head mass share deviates from 0.5 on most tokens.\nSOURCE: own\nTARGET: attention entropy in deep layers, down, with wider spread across heads\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Each head normalizes its own attention distribution to one, independent of the other heads.\nKEEPS: Six heads of 64, the same latent keys and values, causal masking and the dense wo.\nP_SUCCESS: 0.10\nKILL: Mean loss over steps 36-45 more than 0.05 nats above baseline, or step time above 7.5 s.",
+ "usage": {
+  "input_tokens": 14687,
+  "output_tokens": 25826,
+  "cache_read_input_tokens": 23724,
+  "cache_creation_input_tokens": 0,
+  "total_tokens": 64237
+ },
+ "cost_usd": 2.33903,
+ "duration_ms": 936417,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 2,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": true,
+ "attempt_errors": [
+  "CallError: Timeout after 600s (process tree killed)"
+ ],
+ "total_tokens": 64237,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "nest",
+  "note": "Sequence mixing: head count, head structure and output proje / inward / research",
+  "node": "attn_heads_outpu",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46740,
+ "raw": {
+  "duration_api_ms": 332873,
+  "stop_reason": "end_turn",
+  "session_id": "de3e2afa-a34f-4441-8e27-f428bc673651",
+  "total_cost_usd": 1.132251,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 0,
+   "cache_read_input_tokens": 23724,
+   "output_tokens": 22526,
+   "output_tokens_details": {
+    "thinking_tokens": 18584
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 22526,
+     "cache_read_input_tokens": 23724,
+     "cache_creation_input_tokens": 0,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 22526,
+    "cacheReadInputTokens": 23724,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 0,
+    "costUSD": 1.132251,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 18584,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 332997,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 22526,
+    "cache_read_input_tokens": 23724,
+    "cache_creation_input_tokens": 0,
+    "total_tokens": 46252
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 22526,
+    "cache_read_input_tokens": 23724,
+    "cache_creation_input_tokens": 0,
+    "total_tokens": 46252
+   },
+   "source": "usage"
+  }
+ }
+}

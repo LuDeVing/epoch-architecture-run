@@ -1,0 +1,110 @@
+{
+ "call_id": "c41555fdd40",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll write the sketches directly from the brief and the measurements, with no code and no tool use.\n\nPASS 1 (scratch):\n1. Input of a position is only its own row → add a gated copy of the previous token's row (bigram shift).\n2. Unigram frequency is learned by the head → a frozen log-count prior from the train shards sits in the logits.\n3. Logit is an inner product → logit is negative squared distance to the row (Gaussian head).\n4. The token enters at depth 0 only → re-inject the normalized row at every block with a scalar gate.\n5. Normalize after pooling the streams → pool the normalized streams.\n6. The head reads the last state → the head reads a learned mix of the last three block states.\n7. One head pass on the mean → logits averaged over four per-stream head passes (too costly here).\n8. Input row raw, output row through the final-norm gain → run the input through the same final norm (exact tie).\n9. Rows independent → rows with count below k share a common row plus a hashed offset.\n10. Uniform target weighting → down-weight already-recalled bigram targets (objective, out of scope).\n11. Padding rows compete in the softmax → mask the 47 unused rows to minus infinity.\n12. bf16 logits into the loss → chunked fp32 logits.\nKept as leaps: 1, 2, 3, 4, and 5 as a cheap fifth.\n\nIDEA: Normalize the row before it enters the stream\nMECHANISM: Anomaly row restated: block-0 MLP gradient is 0.0718 above what layers 1 and 2 predict on all three seeds. Rival causes: (a) the embedding enters at RMS 0.02 while block 0 writes at RMS 1.4, so block 0 is the real embedding and MLP-0 is a bigram table; (b) a training-phase effect, at step 100 only shallow layers learn and the excess vanishes by step 500; (c) a measurement artifact, raw gradient norm under pre-norm scales as one over the residual RMS at that depth and layer 0 sits where RMS is smallest, so the neighbour extrapolation is wrong. Five-minute probe on the step-100 checkpoint: multiply the token table by 10 and by 50 with no retraining and recompute per-layer gradient norms on one fixed batch, also multiply each layer's norm by its output RMS; if the excess collapses under the scaling it is (a), if it only flattens under the RMS correction it is (c), if it is gone at a step-500 checkpoint it is (b). If (a), the least popular rival, holds, the change is an RMSNorm with its own gain applied to the looked-up row before the four-way broadcast: direction then carries identity into the stream and row norm is left to serve only the head's frequency bias, which is the clean split of the two tied roles. This holds at scale because the ratio of block-0 output to embedding input is independent of width.\nPREDICTION: Block-0 attention and MLP gradient norms fall toward the layer 1-2 trend; the residual RMS after block 0 rises from 1.4 to about 2; the loss curve is ahead by 0.05 to 0.10 nats at step 100 and val loss ends 0.008 to 0.015 lower. Params plus 384, step time unchanged.\nTEST: 100-step smoke on seed 0 against the recorded curve; kill if step-100 loss is not at least 0.03 below 6.179 and the layer-0 excess has not halved. Fallback sweep in TEST of the tune below.\nSOURCE: https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html (embedding RMSNorm)\nTARGET: gradient norm spread, down (layer 0 toward trend); residual RMS growth, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Fixed input scale on the tied row\nMECHANISM: The same cause as above with no norm: multiply the looked-up row by a fixed constant before the broadcast so the input is not 70x smaller than block 0's write. Keeps row norm visible to the input, which the norm port removes, so the two together tell whether row norm carries useful frequency signal into the stream.\nPREDICTION: Same direction as the norm port but smaller, val 0.003 to 0.008 lower at the best constant, worse than baseline at 50 or more once rows for frequent tokens grow. Params and step time unchanged.\nTEST: Sweep the implicit constant 1.0 over 5, 20 (square root of d, the Gemma convention) and 50 in 100-step smokes; keep the best only if it beats the norm port, otherwise discard.\nSOURCE: https://sebastianraschka.com/blog/2026/gemma-4-release-notes.html (sqrt(d) embedding scale)\nTARGET: gradient norm spread, down\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Bigram input shift\nMECHANISM: Anomaly row restated: block-0 attention gradient is 0.25 above what layers 1 and 2 predict on all three seeds, yet its entropy is 0.957 and its max logit 7.8, so it is still nearly uniform at step 100. Rival causes: (a) tiny embedding as above; (b) layer-0 attention is the only route to the previous token and the bigram circuit it is building carries most of the loss gradient at this phase; (c) the one-over-RMS artifact above. Probe on the checkpoint: replace the layer-0 attention output by a fixed previous-token copy of its value input and measure the loss change, against zeroing the branch; if the copy recovers most of the branch's value the circuit is (b). Rerepresented as a kernel over positions, the lookup is a width-1 kernel; the natural edit is a width-2 causal kernel on the embedding: input at t is the row of t plus a learned per-dimension gain times the row of t minus 1, gain initialized at zero. The previous-token bigram statistic then reaches MLP-0 with no attention and no rotary alignment to learn. At scale, the previous-token head is still a full layer's attention spent on a fixed shift.\nPREDICTION: Layer-0 attention gradient falls toward trend and its entropy drops slower; loss at step 100 ahead by 0.10 to 0.15 nats; val loss 0.008 to 0.015 lower. Params plus 384, step time unchanged.\nTEST: 100-step smoke on seed 0; then a 3-seed run.\nSOURCE: own\nTARGET: gradient norm spread, down (layer 0); recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The input at a position carries only its own token's row.\nKEEPS: One tied table, four identical copies, mean read-out, causal attention and all blocks unchanged.\nP_SUCCESS: 0.15\nKILL: Matched-step loss at step 45 not at least 0.05 below the baseline mean.\n\nIDEA: Frozen log-unigram prior in the logits\nMECHANISM: Written as a code length, the loss is a two-part code, prior plus conditional, and the net currently pays for the prior by growing frequent rows and shrinking rare ones under weight decay, so rare tokens at rank 10k+ sit at 11.6 nats with 12 percent of the tokens. The natural edit is to add a fixed per-token log count, computed once from a 50M-token sample of the train shards at startup with add-one smoothing, as a persistent buffer added to the logits. Rows then carry only conditional information, rare rows stop being pushed to zero norm, and the first 100 steps are not spent learning the unigram. Not a parameter, so the AdamW decay never pulls it toward zero. Saved in the state dict, so the exam forward reproduces it.\nPREDICTION: Step-1 loss about 7.6 instead of 10.9; rank 10k+ loss at step 100 down by 0.3 or more; val loss 0.006 to 0.012 lower at the end; step time unchanged, a few seconds added at startup.\nTEST: Build-only shows no param change; 100-step smoke compares the rank-10k+ loss and the curve; 3 seeds.\nSOURCE: own\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The head learns token frequency from scratch through the tied rows.\nKEEPS: Tied table, plain cross entropy, no temperature, mean read-out.\nP_SUCCESS: 0.18\nKILL: Matched-step loss at step 45 not at least 0.08 below the baseline mean.\n\nIDEA: Distance head\nMECHANISM: Rerepresented as a Gaussian class-conditional model, the tied logit is minus half the squared distance between the final state and the row, up to a constant: the inner product minus half the row's squared norm. The code keeps only the inner product, so the model is rewarded for growing frequent rows rather than for steering the state. Under the distance form the optimal state for the next token is the next token's own input row, so the output space and the input space of the tied table become literally the same space, which is what tying was supposed to mean. Rare rows that shrink under decay lose their norm penalty and are no longer pushed to the bottom. Identical to the baseline at initialization since row norms are 0.39.\nPREDICTION: Frequent-row norm growth slows; rank 10k+ loss lower by 0.1 to 0.2 at step 100; val loss 0.004 to 0.010 lower. Params unchanged, one 50304 by 384 reduction per forward, step time within 1 percent.\nTEST: Smoke 100 steps and a row-norm histogram against baseline; 3 seeds.\nSOURCE: own\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The output logit is the raw inner product of state and row.\nKEEPS: Tied table, final RMSNorm, cross entropy, mean read-out.\nP_SUCCESS: 0.12\nKILL: Matched-step loss at step 45 more than 0.05 above the baseline mean.\n\nIDEA: Re-inject the row at every block\nMECHANISM: Written as a differential equation across depth, the stream is driven by block outputs with the token as an initial condition that is 500x smaller than the state by layer 11 after 7.8x growth. The natural edit is a constant forcing term: each block adds a learned scalar gate times the normalized row to its normalized read input, gates initialized at zero. Every layer then sees the current token directly, so block 0 and MLP-0 stop being the sole carriers of identity, which is the shared root of both layer-0 anomalies. Gemma 4 pays separate per-layer tables for this; here it costs 24 scalars and the table is reused.\nPREDICTION: Layer-0 gradient excess halves; deep-layer attention entropy rises slightly; val loss 0.005 to 0.010 lower. Params plus 24, step time within 1 percent.\nTEST: 100-step smoke on seed 0 with the gates logged; if all gates stay below 0.01 in magnitude the mechanism is unused and the idea dies.\nSOURCE: own, builds on https://arxiv.org/html/2607.02770 (per-layer embeddings)\nTARGET: gradient norm spread, down (layer 0 toward trend)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The token enters the computation only at depth 0.\nKEEPS: One tied table, mean read-out, block structure and mixing unchanged.\nP_SUCCESS: 0.12\nKILL: Matched-step loss at step 45 not at least 0.02 below the baseline mean, or all gates below 0.01.\n\nIDEA: Pool the normalized streams\nMECHANISM: Writes start asymmetric, attention into stream 0 and MLP into stream 1, so the four streams end with different RMS and the plain mean is dominated by the largest. Rerepresented as an ensemble of four hypotheses, the natural pooling is in normalized space: apply the final RMSNorm to each stream, then take the equal-weight mean. Equal weights are kept; only the order of norm and mean flips. If the streams are near-identical this is a no-op, which is the cheap kill.\nPREDICTION: Val loss 0.002 to 0.005 lower if end-of-stack stream RMS differs by 2x or more, otherwise unchanged. Params unchanged, step time unchanged.\nTEST: Measure per-stream RMS at the end of the stack on the step-100 checkpoint; skip the idea if the ratio is under 1.5; else 100-step smoke.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The read-out normalizes after pooling the streams.\nKEEPS: Equal-weight mean, tied head, final norm module.\nP_SUCCESS: 0.08\nKILL: Matched-step loss at step 45 more than 0.02 above the baseline mean.\n\nRecap: seven sketches, five leaps, all inside the fixed tied-table and mean-read-out paradigm. The strongest levers the measurements expose are the 70x scale gap between the embedding input and block 0's write, which explains both layer-0 gradient anomalies, and the 11.6-nat rare-token loss that the tied head pays by encoding frequency in row norms. The embedding norm port, the bigram shift and the frozen unigram prior are the three I would run first, each falsifiable in a 100-step smoke.",
+ "usage": {
+  "input_tokens": 4,
+  "output_tokens": 20743,
+  "cache_read_input_tokens": 25942,
+  "cache_creation_input_tokens": 19088,
+  "total_tokens": 65777
+ },
+ "cost_usd": 2.082771,
+ "duration_ms": 388814,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 65777,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:diagnosis",
+  "operator": "inward",
+  "seed": "",
+  "note": "Inputs and outputs: tied embedding, stream read-out, logits / inward / diagnosis",
+  "node": "io_embed_head",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 42749,
+ "raw": {
+  "duration_api_ms": 387364,
+  "stop_reason": "end_turn",
+  "session_id": "c43715c6-224f-4c06-9235-46ecd85bec0f",
+  "total_cost_usd": 1.4254355,
+  "usage": {
+   "input_tokens": 4,
+   "cache_creation_input_tokens": 19088,
+   "cache_read_input_tokens": 25942,
+   "output_tokens": 20743,
+   "output_tokens_details": {
+    "thinking_tokens": 16166
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19088,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 20735,
+     "cache_read_input_tokens": 22515,
+     "cache_creation_input_tokens": 0,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 4,
+    "outputTokens": 20743,
+    "cacheReadInputTokens": 25942,
+    "cacheCreationInputTokens": 19088,
+    "webSearchRequests": 0,
+    "costUSD": 1.4254355,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 16166,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 387466,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 4,
+    "output_tokens": 20743,
+    "cache_read_input_tokens": 25942,
+    "cache_creation_input_tokens": 19088,
+    "total_tokens": 65777
+   },
+   "model_usage_sum": {
+    "input_tokens": 4,
+    "output_tokens": 20743,
+    "cache_read_input_tokens": 25942,
+    "cache_creation_input_tokens": 19088,
+    "total_tokens": 65777
+   },
+   "source": "usage"
+  }
+ }
+}

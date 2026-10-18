@@ -1,0 +1,104 @@
+{
+ "call_id": "cffcba6fd96",
+ "role": "defaults",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "1. Per-head learned read weights over the four streams for attention/MLP inputs.\n2. Rotary dimension per head instead of one shared rotary key.\n3. Apply RoPE to compressed latent, not raw x, for keys.\n4. Learned per-stream final-norm weights replacing plain mean at the head.\n5. Layer-dependent sliding windows: alternate local and full attention blocks.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 133,
+  "cache_read_input_tokens": 649,
+  "cache_creation_input_tokens": 13166,
+  "total_tokens": 13950
+ },
+ "cost_usd": 0.27503,
+ "duration_ms": 9724,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 400,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 13950,
+ "over_cap": false,
+ "meta": {
+  "card": "defaults"
+ },
+ "prompt_chars": 23330,
+ "raw": {
+  "duration_api_ms": 8185,
+  "stop_reason": "end_turn",
+  "session_id": "98e24c66-a4f9-4fcf-a885-f111082dafbb",
+  "total_cost_usd": 0.27015225,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13166,
+   "cache_read_input_tokens": 649,
+   "output_tokens": 133,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13166,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 133,
+     "cache_read_input_tokens": 649,
+     "cache_creation_input_tokens": 13166,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13166
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 133,
+    "cacheReadInputTokens": 649,
+    "cacheCreationInputTokens": 13166,
+    "webSearchRequests": 0,
+    "costUSD": 0.27015225,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 8317,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 133,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 13166,
+    "total_tokens": 13950
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 133,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 13166,
+    "total_tokens": 13950
+   },
+   "source": "usage"
+  }
+ }
+}

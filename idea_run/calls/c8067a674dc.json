@@ -1,0 +1,110 @@
+{
+ "call_id": "c8067a674dc",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll deliver the idea sketches directly, since the task asks for analysis and no code.\n\nPASS 1 (scratch):\n1. Every layer owns its own value matrix → one w_up shared across all 12 layers, per-layer gate and down, hidden widened with the freed parameters.\n2. No biases anywhere → a learned per-unit threshold on the gate pre-activation only.\n3. The MLP sees only the current token → the value path reads a learned blend of current and previous token, the gate reads the current token only.\n4. The branch may emit any magnitude → the gated hidden is RMS-normalized and a learned per-layer scalar sets the write size.\n5. The activation is the same at step 1 and step 1525 → SiLU gate annealed toward ReLU across the budget.\n6. Hidden units are independent → grouped softmax competition among units of four, so each group picks a winner.\n7. The hidden is dense → per-token top-k on the gated hidden before the down projection.\n8. w_down is independent of w_up → tie w_down to w_up transposed, widen with the freed third of the parameters.\n9. The gate is linear in x → gate from a low-rank quadratic feature of x.\n10. Width is fixed across the run → mask half the hidden units for the first 30 percent of steps, then release them.\n11. The hidden is memoryless along T → decayed causal running sum of the gated hidden before w_down.\n12. The gate pre-activation has unit temperature → a learned per-layer temperature so some layers become near-linear and others near-sparse.\n\nKept as the three existence mechanisms: 1, 2, 3. Added 4 as a fourth leap. Seeds 5 to 12 are dropped (too costly, too close to the brief, or mechanism not specific enough).\n\nIDEA: Shared value dictionary across depth\nMECHANISM: One w_up (the value matrix) is shared by all 12 MLPs while each layer keeps its own gate and down projections; the parameters this frees widen the hidden. In a key-value reading of the FFN, the gate chooses which entries fire and w_down decides where they are written, so those must stay per layer, but the raw value features read from the normalized residual are the same kind of object at every depth; sharing them gives each layer a wider lookup table for the same parameter count, which is how a 2x-wider model gets its advantage.\nPREDICTION: At d_ff 1300 the MLP has about 12.5M parameters (2.4M fewer than baseline), step time rises about 7 percent from the wider matmuls, and the loss curve runs below baseline from roughly step 200 onward; at d_ff 1536 (if VRAM allows) the gap widens. Peak VRAM rises by roughly 100 to 150 MB, which is the binding constraint.\nTEST: 3-step smoke for peak VRAM at d_ff 1300 and 1536 (fail if above 5.6 GB); then a 45-step matched comparison against baseline and against a control with the same width but per-layer w_up and the parameter cap ignored, to separate \"wider\" from \"shared\".\nSOURCE: own\nTARGET: loss on rare tokens (should fall, since rare-token memory lives in FFN lookup capacity); validation loss overall.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Each layer's MLP must own all three of its matrices; the value projection can instead be one matrix read by every layer without loss.\nKEEPS: SwiGLU form, per-layer gate and down projections, pre-norm, Muon on the shared matrix (gradients summed across layers), same init std.\nP_SUCCESS: 0.12\nKILL: Mean loss over steps 40 to 45 higher than the baseline's by 0.03 or more (3 seeds), or peak VRAM over 5.6 GB at every width that frees parameters.\n\nIDEA: Learned gate threshold (one bias, on the gate only)\nMECHANISM: Add a per-unit bias to the gate pre-activation, initialized at zero, nothing else. In this recipe the MLP input has fixed RMS from RMSNorm and Muon's orthogonalized updates keep w_gate's singular values near-uniform, so a unit cannot cheaply move its operating point; roughly half the units are \"on\" for every token and the hidden behaves like a dense near-linear map. A threshold is the one degree of freedom the spectral update does not supply, and it lets units become selective detectors, which is what wider models buy with extra units.\nPREDICTION: Parameter count rises by 12,924 (negligible); step time unchanged; the fraction of gate pre-activations below zero drifts from about 0.5 toward 0.6 to 0.7 within a few hundred steps; the loss curve separates from baseline after warmup rather than at the start.\nTEST: 45-step matched run with the bias logged; also check that AdamW's weight decay (0.1 on the 1-D group) is not pinning the bias at zero. If biases stay within 0.05 of zero at step 45, the mechanism is not engaging.\nSOURCE: own\nTARGET: loss on rare tokens (selective units should sharpen memory for rare continuations); validation loss overall.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A pre-norm network needs no biases; a bias on the gate alone changes what the MLP can represent under Muon.\nKEEPS: Everything else in the MLP, including SiLU gating, width, and init; the bias is zero at step 0 so the model equals baseline at init.\nP_SUCCESS: 0.10\nKILL: Mean loss over steps 40 to 45 higher than baseline by 0.02 or more, or learned biases with absolute mean below 0.05 at step 45 (then the parameter is dead and the idea is moot).\n\nIDEA: Value path reads the previous token, gate reads the current one\nMECHANISM: The up (value) projection is fed a per-channel learned blend of the current and previous token's normalized input, x + lambda*(x_prev - x) with lambda in [0,1] init 0; the gate still reads only the current token. The FFN is the model's n-gram memory, and at 21M parameters much of the loss is bigram and trigram prediction; letting the gate address a value that also carries the previous token turns each unit into a bigram-conditioned entry without spending an attention head on it. Inkling runs short causal convolutions at 975B, so the mechanism does not vanish at scale, though its share of the gain should shrink.\nPREDICTION: 4,608 extra parameters; step time within 1 percent (one tensor roll per layer); an extra (B,T,384) activation per layer, about 40 MB total. Lambda grows away from zero in the first 200 steps and the loss curve is below baseline from early on because bigram statistics are learned first.\nTEST: 45-step matched comparison against baseline, against the mirrored variant (gate shifted, value current), and against a whole-input shift (Shift-FFN as published). If the mirrored or whole-input variant does as well, the asymmetry adds nothing and the idea becomes a port.\nSOURCE: own, building on Shift-FFN https://arxiv.org/pdf/2505.17153\nTARGET: attention entropy in deep layers (should rise, since local lookups move out of attention); validation loss overall.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The MLP is a function of one position only; the value path may read a neighbor while the gate stays position-local.\nKEEPS: SwiGLU, width, down init, causality (only the previous token is read; position 0 reads zeros), identical to baseline at init.\nP_SUCCESS: 0.15\nKILL: Mean loss over steps 40 to 45 higher than baseline by 0.02 or more, or lambda with mean below 0.02 at step 45.\n\nIDEA: Normalized hidden with a learned per-layer write scalar\nMECHANISM: RMS-normalize the gated hidden over its 1077 units before w_down and multiply by one learned scalar per layer. The MLP's output RMS grows to 10.9 across depth; with a normalized hidden the write magnitude no longer depends on how many units fire, so w_down learns direction only and the scalar carries the magnitude explicitly. This bounds the branch contribution the way Peri-LN does but one matmul earlier, where the norm is over the hidden rather than the model dimension and does not interact with the 4-stream combine.\nPREDICTION: 12 extra parameters; step time up about 1 percent; residual RMS growth across depth flattens; the loss curve may start slightly worse (init magnitude differs from baseline) and should cross below by step 300 if the mechanism helps.\nTEST: 45-step matched comparison plus a per-layer dump of MLP output RMS at steps 1 and 45. Control: Peri-LN style output norm on the 384-dim output, to see whether normalizing before or after w_down matters.\nSOURCE: own, related to Peri-LN https://arxiv.org/pdf/2502.02732\nTARGET: residual RMS growth (down); gradient norm spread across layers (narrower).\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The MLP may write any magnitude it computes; the magnitude is instead a single learned number per layer and the hidden carries only direction.\nKEEPS: SwiGLU, width, per-layer independent weights, the existing down-projection init.\nP_SUCCESS: 0.10\nKILL: Mean loss over steps 40 to 45 higher than baseline by 0.05 or more (allowing for the different init scale), or a layer whose output RMS collapses below 0.1 (the norm plus small scalar has silenced it).\n\nIDEA: Late-heavy FFN width (Reverse shape) at constant parameters\nMECHANISM: Hidden width grows linearly with depth, from about 646 at layer 0 to about 1508 at layer 11, with the same 12,924 total hidden units. Early layers in this recipe mostly build token-local features that the latent attention then mixes; the layers nearest the tied head must map a 384-dim state onto 50k vocabulary continuations and are where rare-token memory is stored, so they are the ones short of FFN capacity.\nPREDICTION: Parameter count unchanged within a few thousand; step time unchanged; the loss curve matches baseline early and pulls ahead in the second half of training, when rare-token memorization starts to matter.\nTEST: --build-only for the parameter count, then a 45-step matched run against baseline and against the Crown shape (wide in the middle). Widths rounded to multiples of 8.\nSOURCE: https://arxiv.org/pdf/2509.06518\nTARGET: loss on rare tokens (down); recall-token loss unchanged or slightly worse as a cost signal.\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Spend the parameter headroom on FFN width\nMECHANISM: Raise d_ff from 1077 to 1216 (a multiple of 64, within the 10 percent cap). The FFN is the part with the best loss-per-parameter return at this scale, and the measured count sits 1.93M below the cap. This is the reference gain any other idea must beat.\nPREDICTION: Non-embedding parameters rise by about 1.92M to within the cap; step time up about 4 percent; peak VRAM up about 55 MB, which is the risk; the loss curve is uniformly slightly below baseline with a gain of roughly 0.01 to 0.02 nats at the end.\nTEST: 3-step smoke for peak VRAM (must stay below 5.6 GB; fall back to 1152 if not), then --build-only to confirm the count; worth sweeping 1152, 1216 and the exact cap 1230.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Squared-ReLU gate inside the GLU\nMECHANISM: Replace SiLU on the gate path with ReLU squared, value path unchanged. At a 50M-token budget the sparser, convex gate trains the FFN as a more clearly addressable memory, and Primer's search found the squared activation to be the single largest gain; the open question is whether it holds inside a gated form at this size, which the 1.3B tie leaves unanswered.\nPREDICTION: Parameter count and step time unchanged; the MLP output is much smaller at init (squares of small pre-activations), so the first 50 steps are slightly worse, after which the curve should cross below baseline if the sparsity helps; hidden activity falls to about 20 to 30 percent of units per token.\nTEST: 45-step matched run against baseline and against plain ReLU gating (ReGLU), to separate \"sparse\" from \"squared\". If both fall behind baseline at step 45 by more than noise, discard.\nSOURCE: https://arxiv.org/pdf/2109.08668 and https://arxiv.org/pdf/2402.03804\nTARGET: loss on rare tokens (down if the sparser memory specializes); validation loss overall.\nSCOPE: validation loss at 1024\nKIND: port",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 16078,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20077,
+  "total_tokens": 39584
+ },
+ "cost_usd": 1.693295,
+ "duration_ms": 246365,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 39584,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "castle",
+  "note": "Per-token computation: SwiGLU MLP / inward / research",
+  "node": "mlp_swiglu",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 45703,
+ "raw": {
+  "duration_api_ms": 244553,
+  "stop_reason": "end_turn",
+  "session_id": "37ec9e7f-d2db-4622-bdee-2bb3f3efbd2c",
+  "total_cost_usd": 1.20631675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20077,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 16078,
+   "output_tokens_details": {
+    "thinking_tokens": 11675
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20077,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 16078,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20077,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20077
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 16078,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20077,
+    "webSearchRequests": 0,
+    "costUSD": 1.20631675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 11675,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 244766,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 16078,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20077,
+    "total_tokens": 39584
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 16078,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20077,
+    "total_tokens": 39584
+   },
+   "source": "usage"
+  }
+ }
+}

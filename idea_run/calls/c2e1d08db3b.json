@@ -1,0 +1,105 @@
+{
+ "call_id": "c2e1d08db3b",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Asymmetric key/value expand widths\", \"members\": [\"s05a7731c77\"]},\n  {\"name\": \"Gated nonlinear KV path (latent or expansion)\", \"members\": [\"s457e0ed275\", \"sd10ade3d00\"]},\n  {\"name\": \"Global shared KV expand matrix\", \"members\": [\"s0b1f60fd9a\"]},\n  {\"name\": \"Per-head value withhold gate\", \"members\": [\"s415be5a4ed\"]},\n  {\"name\": \"Learned latent sink register\", \"members\": [\"s369734243c\"]},\n  {\"name\": \"Per-head low-rank K/V residual\", \"members\": [\"sed5950f589\"]},\n  {\"name\": \"Rotary sub-vector init scale\", \"members\": [\"s71d6cb6f00\"]},\n  {\"name\": \"Successor-value heads\", \"members\": [\"s10bec45c74\"]},\n  {\"name\": \"Latent token shift\", \"members\": [\"s2996e9233a\"]},\n  {\"name\": \"Query scored against latent (drop key expansion)\", \"members\": [\"s18eedb7891\"]},\n  {\"name\": \"Prefix-conditioned keys\", \"members\": [\"s21aec0ff10\"]},\n  {\"name\": \"Rope width sweep\", \"members\": [\"s3b8587eaad\"]},\n  {\"name\": \"Normalized rope slice\", \"members\": [\"sc155120cb9\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 1084,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2778,
+  "total_tokens": 5432
+ },
+ "cost_usd": 0.027154,
+ "duration_ms": 9939,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 5432,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_latent_kv/inward, 14 sketches"
+ },
+ "prompt_chars": 6429,
+ "raw": {
+  "duration_api_ms": 8190,
+  "stop_reason": "end_turn",
+  "session_id": "3da14c51-3e86-42e7-bff2-4e92b11fc75c",
+  "total_cost_usd": 0.022112800000000002,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2778,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 1084,
+   "output_tokens_details": {
+    "thinking_tokens": 620
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2778,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1084,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2778,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2778
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 1084,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2778,
+    "webSearchRequests": 0,
+    "costUSD": 0.022112800000000002,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 620,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 8255,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 1084,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2778,
+    "total_tokens": 5432
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 1084,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2778,
+    "total_tokens": 5432
+   },
+   "source": "usage"
+  }
+ }
+}

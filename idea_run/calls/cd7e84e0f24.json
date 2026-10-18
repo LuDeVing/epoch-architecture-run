@@ -1,0 +1,110 @@
+{
+ "call_id": "cd7e84e0f24",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll write the scratch rule list and seeds first, then the sketches that count.\n\nPASS 1 (scratch):\n\nEight rules of this part, ranked by how much of the recipe depends on each:\n1. R1: the training objective and the exam are the same cross entropy, averaged with equal weight over every position of every 1024-token window.\n2. R2: the budget is counted in tokens processed, so any compute per token up to 2x the baseline is free.\n3. R3: the exam scores the saved weights frozen, one causal forward pass per window, no state carried in or out.\n4. R4: every token sees exactly the earlier tokens of its window, including tokens from other documents.\n5. R6: every layer computes the same two-branch function once, in fixed order, and every token costs the same.\n6. R7: the unit of modeling and of measurement is the GPT-2 token, and the tokenizer is fixed.\n7. R8: the output distribution is a fixed function of the final hidden state through the tied head.\n8. R5: every training token is seen exactly once.\n\nTwelve seeds, one rule each:\n1. R2: time-matched exam; a two-level factored head cuts the 42 percent head cost and buys about 1.5x the tokens.\n2. R3: the exam may take one gradient step on the first half of each window before scoring the second half; train the model to be adaptable.\n3. R1: train and score only positions with at least 256 tokens of context, so the model is a conditional predictor, not a window scorer.\n4. R7: tokens in, bytes out; a small byte decoder replaces the 50k softmax and the exam measures bits per byte.\n5. R4: attention and positions reset at document boundaries; the exam reports loss by in-document position.\n6. R8: a causal pointer cache mixed into the head, exact and memory-free during training.\n7. R5: 25M unique tokens seen twice with shifted windows at the same 50M budget; the exam becomes a data-limited exam.\n8. R6: early-exit heads at layers 4 and 8 through the tied head; the exam charges per-token FLOPs.\n9. R1: the exam scores the joint window likelihood under any factorization; the model predicts tokens in a learned order.\n10. R3: streaming exam with a 256-token carry from the previous window; train with the same carry.\n11. R6: layers 7 to 12 re-run the weights of layers 1 to 6 with separate stream mixing.\n12. R1: the exam reports top-1 error and calibration next to cross entropy.\n\nKept for full write-up (the quota asks for four leaps): seeds 1, 2, 3 and 4, the farthest from the digest. Seeds 5 and 6 are ports and appear as such. Seeds 8 and 11 are known depth tricks, seed 9 is not causal under the current exam, seed 7 only questions whether data binds.\n\nIDEA: Time-matched budget with a factored head\nMECHANISM: The head is 42 percent of forward compute and is the one block whose cost buys no representational depth; a two-level softmax over 224 frequency bands times 224 members computes 448 dot products per token instead of 50304, so at equal wall-clock the model sees about 1.5x the tokens. The full 50304-way logits needed by the exam are recovered exactly as band log-prob plus member log-prob, computed only at exam time.\nPREDICTION: Step time about 0.6x the baseline and peak VRAM about 0.5 GB lower because no (B*T, 50304) logits tensor exists in training; parameters +86k for the band matrix. At the fixed token budget the factorization costs +0.02 to +0.04 nats; at the baseline's wall-clock the extra tokens are worth about -0.05, net -0.02 to -0.03.\nTEST: A 3-step timing run must show under 3.0s per step, then a 45-step time-matched comparison. New success measure: validation loss after the baseline's measured wall-clock for 50M tokens on the same card, three seeds, same Welch test.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024 under a time-matched verifier; under the current token-matched exam it is a loss\nKIND: leap\nBREAKS: the budget is counted in tokens processed, so any compute per token up to 2x is free.\nKEEPS: the same backbone, data, optimizer, schedule and exam windows; only the head factorization and the budget's unit change.\nP_SUCCESS: 0.05 at the current token budget\nKILL: at 45 matched steps the factored model's train loss is more than 0.08 nats above the baseline's, which means the factorization itself, not the speed, is what moved.\n\nIDEA: Exam after one step of adaptation, model trained to adapt\nMECHANISM: The exam scores tokens 513 to 1024 of each window after one SGD step on the window's own first 512 tokens, adapting only the 9,600 RMSNorm gains; training runs the same inner step on every micro-batch and backpropagates the second-half loss through the adapted gains first-order, so the gains become a channel the model learns to steer from 512 tokens of in-domain text. The frozen first-half loss is kept in the training sum so the unadapted model stays comparable.\nPREDICTION: Step time about 1.5x; parameters unchanged; frozen validation loss within 0.005 of the baseline; adapted second-half loss 0.03 to 0.08 nats below the frozen second-half loss, since dynamic evaluation gains are largest for small models.\nTEST: A 45-step run that logs three numbers per step: first-half loss, frozen second-half loss, adapted second-half loss. New success measure: mean adapted loss on positions 513 to 1024 over the same 2M validation tokens, three seeds, with the frozen loss reported beside it.\nSOURCE: own; the exam side builds on dynamic evaluation, https://arxiv.org/abs/1709.07432\nTARGET: loss at late positions, downward\nSCOPE: validation loss at 1024 under an adaptation verifier; also what the model can learn at inference\nKIND: leap\nBREAKS: the exam scores the saved weights frozen, one forward pass per window, no state carried in or out.\nKEEPS: the architecture, optimizer, data and token budget; the inner step touches only norm gains, so the frozen model remains a drop-in GPT.\nP_SUCCESS: 0.1\nKILL: at 45 matched steps the adapted second-half train loss is not at least 0.01 nats below the frozen second-half loss, or the frozen loss is more than 0.05 above the baseline.\n\nIDEA: Context-rich objective and exam\nMECHANISM: About a quarter of the training signal comes from positions with under 256 tokens of context, where the loss is 0.3 to 0.5 nats higher and mostly irreducible by a 21M model; masking the loss on positions 0 to 255 and keeping them as context shifts every gradient toward mechanisms that use context, such as induction and long-range copying. The exam then scores positions 513 to 1024 only, treating the model as a conditional predictor rather than a window scorer.\nPREDICTION: Step time and parameters unchanged; loss at positions 0 to 255 rises by about 0.05; loss at positions 512 and later falls by about 0.01; the uniform exam moves by +0.005 or less, the late-position exam by -0.01.\nTEST: A 45-step run reporting the loss split into position bands 0-255, 256-511, 512-1023 for the candidate and the baseline. New success measure: mean validation loss on positions 513 to 1024 of the fixed windows, three seeds.\nSOURCE: own\nTARGET: loss at late positions, downward\nSCOPE: validation loss at 1024 under a late-position verifier; under the uniform exam it is neutral at best\nKIND: leap\nBREAKS: the objective and the exam weight every position of every window equally.\nKEEPS: next-token cross entropy, the same model, data, optimizer and budget; only which positions contribute to the loss changes.\nP_SUCCESS: 0.1\nKILL: at 45 matched steps the candidate's train loss on positions 512 and later is not at least 0.01 nats below the baseline's on the same band.\n\nIDEA: Tokens in, bytes out\nMECHANISM: The input stays GPT-2 tokens for cheap context, but the output becomes the next token's byte string, produced by a two-layer byte decoder of width 192 conditioned on the final hidden state and teacher-forced for about five byte steps per position. The 50304-way head and its 42 percent of compute disappear, rare tokens share statistics through their spellings, and every GPT-2 token is a unique prefix-free byte string plus end marker, so token probability is the product of byte probabilities and the measure becomes bits per byte.\nPREDICTION: Head compute drops to about 5 percent; the byte decoder adds about 1.0M non-embedding parameters, within the cap; training peak VRAM falls by about 0.4 GB. Token-equivalent loss within 0.05 of the baseline at 50M tokens, with the largest change on rare tokens; at matched time the freed compute pays for two more layers.\nTEST: A 45-step run reporting byte NLL summed per token and averaged per position next to the baseline's token CE; a 3-step timing run. New success measure: bits per byte on the 2M validation tokens' underlying bytes, three seeds.\nSOURCE: own; the measurement unit follows byte-level work such as https://arxiv.org/abs/2412.09871\nTARGET: loss on rare tokens, downward\nSCOPE: bits per byte at 1024 under a byte verifier; the current exam cannot score it directly without enumerating all 50304 spellings per position\nKIND: leap\nBREAKS: the unit of modeling and of measurement is the GPT-2 token, and the tokenizer is fixed.\nKEEPS: the token embedding, the whole backbone, the optimizer, data and budget; only the head and the measure change.\nP_SUCCESS: 0.1\nKILL: at 45 matched steps the per-token byte NLL is more than 0.15 nats above the baseline's token CE.\n\nIDEA: Documents, not windows\nMECHANISM: Random windows and the fixed exam windows both cut across documents, so most windows contain one boundary and the model learns to discount a foreign prefix and parks junk in the first-token sink. Building a block-diagonal causal mask from the end-of-text token inside forward, and restarting rotary positions at each boundary, removes that cost and makes in-document position exact; this uses only the input ids and is legal under the current exam.\nPREDICTION: Step time +5 to +10 percent because the masked path leaves the flash kernel; parameters unchanged; validation loss -0.005 to -0.015, with the gain concentrated at positions 256 and later within a document and none at document starts.\nTEST: A 3-step timing and peak-memory check first, since the mask costs a few MB and headroom is 0.1 GB; then 45 matched steps. Proposed companion measure for a new verifier: validation loss stratified by in-document position bands 0-15, 16-63, 64-255, 256+, so the context-use slope becomes visible.\nSOURCE: https://arxiv.org/abs/2402.13991\nTARGET: loss at late positions, downward; first-token attention mass, downward\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Exact causal pointer cache in the head\nMECHANISM: Add one extra attention head whose weights over earlier positions are read as a copy distribution over the tokens that followed those positions, and mix it with the softmax head through a learned sigmoid gate on the final hidden state. During training the mixture probability of the target needs only a (B, T, T) match matrix of equal next-tokens, so no vocabulary-sized tensor is ever built; at exam time forward builds the full log-mixture logits once in no-grad, which the exam's cross entropy consumes unchanged.\nPREDICTION: Parameters +0.3M for the pointer query and key projections and the gate; step time +3 percent; training peak VRAM unchanged; validation loss -0.01 to -0.02, almost all of it on tokens that already appeared in the window.\nTEST: Check that the exam-time logits path fits in memory at micro-batch 4, then 45 matched steps with the loss split into tokens seen earlier in the window and tokens not seen.\nSOURCE: https://arxiv.org/abs/1612.04426 and https://arxiv.org/abs/1609.07843\nTARGET: recall-token loss, downward\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Make the four streams actually differ\nMECHANISM: At init the mixing diagonal is exp(6) to 1, so each stream keeps 99.3 percent of itself, and the write weights are 1.015 on the own stream and 0.995 on the others, so every branch writes almost equally into four streams that start as identical copies; the residual expansion costs four times the stream memory for a near-null operation, and AdamW's decay pulls the mixing toward uniform, which averages the streams back together. Setting the write logits to +2.0 on the own stream and -2.0 elsewhere makes attention write mainly into stream 0 and the MLP into stream 1, leaving streams 2 and 3 as near-pure carries, so the uniform read has distinct things to select from the first step.\nPREDICTION: Parameters and step time unchanged; residual RMS grows more slowly in the carry streams and the read logits move further from uniform by the end; validation loss -0.003 to -0.01.\nTEST: 45 matched steps against the baseline; sweep own-stream logit in {1.0, 2.0, 3.0} and other-stream logit in {-1.0, -2.0, -3.0}, and log the per-stream RMS at layer 12.\nSOURCE: own\nTARGET: residual RMS growth, downward; validation loss\nSCOPE: validation loss at 1024\nKIND: tune\n\nRecap: the four leaps each reframe what the exam measures and name the new success measure, with the time-matched budget and the adaptation exam the two most likely to change rankings. The pointer cache and document masking are the two changes expected to win under the exam as it stands, and the stream-write init is the cheapest check of a cost the current skeleton pays for nothing.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 21906,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 17203,
+  "total_tokens": 42538
+ },
+ "cost_usd": 2.102055,
+ "duration_ms": 344004,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 42538,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:formal",
+  "operator": "upward",
+  "seed": "battery",
+  "note": "lower validation loss at a fixed budget / upward / formal",
+  "node": "root",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 38862,
+ "raw": {
+  "duration_api_ms": 342586,
+  "stop_reason": "end_turn",
+  "session_id": "5b420256-3fce-42a8-99e9-28d3c07324c3",
+  "total_cost_usd": 1.44023675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 17203,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 21906,
+   "output_tokens_details": {
+    "thinking_tokens": 17106
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 17203,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 21906,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 17203,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 17203
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 21906,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 17203,
+    "webSearchRequests": 0,
+    "costUSD": 1.44023675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 17106,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 342684,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 21906,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 17203,
+    "total_tokens": 42538
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 21906,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 17203,
+    "total_tokens": 42538
+   },
+   "source": "usage"
+  }
+ }
+}

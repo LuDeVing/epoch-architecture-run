@@ -1,0 +1,108 @@
+{
+ "call_id": "c7d1fc5408c",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- The idea's own gate has already failed. Its TEST says to drop the idea unless blocks 10–11 are the highest-entropy layers. The measured entropies are 0.711 and 0.763, which rank 7th and 8th. Layer 0 is the flattest at 0.957, followed by layer 1 at 0.903. So the re-layout adds attention where attention is most uniform and removes it from mid-sharp layers. The causal story is inverted before any training happens. Cheapest check: re-read the entropy row already measured, or zero the attention branches of blocks 10–11 on a trained baseline checkpoint and measure the loss rise. | severity: high | class: interaction_cancels | if_true: long_z above -1.0 | link: L2\n- Entropy at step 100 says nothing about which layers become redundant at step 1525. Copying and induction-style heads form later in training. In a 12-layer model these heads tend to sit in the later half, because they need a previous-token head below them. Recall tokens are 13% of targets with loss 4.475, and that is exactly the behaviour deep attention serves. Removing attention in blocks 10–11 removes the last two positions where a composed head can read the earlier hops. The loss shows up late and lands in the exam. Cheapest check: run the attention-ablation of blocks 10–11 on a full-budget baseline checkpoint, not a 100-step one, and look at recall-token loss. | severity: high | class: early_only | if_true: trend above 0 | link: L2\n- The early gain fades while the deep loss persists. A second attention stage before any MLP in blocks 0–2 gives a cheap two-hop path that speeds up the step-45 and step-200 recall metrics. By 1525 steps the baseline learns the same composition across blocks 1–4. The extra early stage then adds nothing, but the missing deep attention still costs loss. The matched-step advantage should shrink monotonically. Cheapest check: compute the train-loss difference against baseline at steps 200, 600 and 1200 and see whether it shrinks toward zero or flips sign. | severity: high | class: early_only | if_true: trend above 0 | link: L3\n- The expected effect is smaller than the test can detect. The predicted gain is −0.000 to −0.015 nats. C7 requires more than 0.005 nats at p<0.01 with a one-sided Welch test over 3 seeds. With seed-to-seed standard deviation around 0.005–0.01 at 50M tokens, even a true −0.01 effect is rarely significant with n=3. Cheapest check: take the pooled baseline seed std and compute the power at Δ=0.01. | severity: high | class: below_noise | if_true: long_z above -2.3 | link: L5\n- The step-45 kill criterion cannot see the change. At step 45 the model is in the unigram/bigram phase: loss falls mostly through embeddings and MLPs, and attention barely matters. Moving attention stages around therefore changes step-45 loss by much less than 0.03. The KILL gate passes almost any layout, and the idea reaches 3 full seeds on no evidence. Cheapest check: compare step-45 loss for an extreme variant, such as all 12 blocks MLP-only. If that also passes the 0.03 gate, the gate is blind. | severity: medium | class: metric_blind | if_true: learn_z above -1.0 | link: L5\n- The per-stage logits are hard-coded to two stages, which invites a builder slip. `mix_logits` has shape (2,4,4), `read_logits` (2,4) and `write_logits` (2,4), and `combine(..., stage)` indexes them by 0 or 1. The asymmetric write init routes attention writes to stream 0 and MLP writes to stream 1. A builder adding the third stage in blocks 0–2 can easily reuse `stage=0` for the second attention. Then both attention stages share read, write and mix logits, so the stage does not get \"its own read and write logits\". Another easy mistake: the MLP in MLP-only blocks 10–11 gets called with `stage=0`, so it inherits the attention write bias toward stream 0. Either way the four-stream routing collapses. Cheapest check: assert the logits have shape (n_stages,4,4) per block and that the stage index is distinct per call. | severity: medium | class: impl_slip | if_true: fidelity below 1.0 | link: L1\n- `read_logits` and `write_logits` are 2-D and are not named tok or head, so `build_optimizers` sends them to Muon. Muon orthogonalizes them as a single matrix of shape stages×4. Growing this matrix from 2×4 to 3×4 in blocks 0–2 changes the Newton–Schulz output for the existing rows. The orthogonal update couples the stages, so the per-row update magnitude and direction differ from the 2-stage blocks. The new stage's write gates move in lock-step with the old ones rather than learning independently. In blocks 10–11, a leftover unused row gives a rank-1 matrix whose shape-aware scale differs again. Cheapest check: log per-stage read/write softmax trajectories in blocks 0 and 5 over 200 steps. | severity: medium | class: interaction_cancels | if_true: learn_z above -1.0 | link: L4\n- The added early attention stages may learn little, while the anomaly at layer 0 is not a real signal. Layer 0 attention already has a grad-norm anomaly (0.29, z 7) and the flattest entropy (0.957). Attention on raw embeddings acts largely as bag-of-words averaging. A second attention stage reading the same near-unprocessed streams before any MLP mostly duplicates that average. The idea reads the large layer-0 gradient as a sign of useful capacity, but it more likely reflects the embedding scale. Cheapest check: after 100 steps, measure the added stage's attention entropy and its write-gate weight against the first stage in block 0. | severity: medium | class: interaction_cancels | if_true: learn_z above -1.0 | link: L4\n- Checkpointing block 0 has a hidden step-time cost, and the cost estimate assumes plain residual blocks. Block 0 now holds two attention stages and three four-stream combines. Each combine runs a Sinkhorn mix and an einsum over a (B,T,4,384) tensor, both memory-bound, so at d=384 they cost about as much as attention itself. The extra stage costs 3 more combines across blocks 0–2 and removes only 2 in blocks 10–11. Recomputing block 0 on top of that likely puts step time at +6–10%, not +4%, and that real compute is not counted in the 50M-token budget. Cheapest check: run `--smoke-steps 20` against baseline and compare tok/s and peak_vram_gb. | severity: low | class: hidden_cost | if_true: step_ratio above 1.10 | link: L1\n- The exam can silently disagree with the training run. If the layout is controlled by a new Config field, it is saved in model.pt, and the exam rebuilds the model with GPT(cfg). If instead it is controlled by a module-level constant or a CLI flag outside `asdict(Config())`, the exam builds a model whose state_dict does not match the saved one. The load then fails, or worse, loads with stale attention weights in blocks 10–11. A related problem: if blocks 10–11 keep their Attention modules and just skip them in forward, the 1.06M dead parameters still count toward C3. Cheapest check: load model.pt through the exam path and compare logits on one batch against the training model. | severity: medium | class: impl_slip | if_true: fidelity below 1.0 | link: L1\n- Removing attention from the top two blocks also removes 2 of the 4 last stream mixes into the output. The output is the mean over 4 streams. Blocks 10–11 then only move MLP output into the streams through stage-1 writes. Attention-routed information then reaches the head only through the slower Sinkhorn mixing, at near-identity logits of 6.0 with AdamW weight decay. As a result the last attention-carrying stream is diluted by 3 streams in the mean. Cheapest check: on a trained model, compute per-stream RMS and cosine to the final mean at blocks 9 and 11. | severity: low | class: interaction_cancels | if_true: long_z above -1.0 | link: L2\n\nVERDICT: The baseline's own measurements already refute the premise: the deepest layers are not the near-uniform ones (layer 0 is), so the idea removes useful late attention, which recall/induction behaviour needs by step 1525, to add attention where it is most redundant, and any small early gain fades into seed noise below the 0.005-nat bar.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 6187,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12439,
+  "total_tokens": 20196
+ },
+ "cost_usd": 0.699638,
+ "duration_ms": 66973,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 20196,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "depth_layer_stac-ou-k03",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Depth-shaped attention/MLP stage layout'",
+  "node": "depth_layer_stac"
+ },
+ "prompt_chars": 27884,
+ "raw": {
+  "duration_api_ms": 65723,
+  "stop_reason": "end_turn",
+  "session_id": "f6115f9c-9e36-4b15-b420-5a9fbd08bcd3",
+  "total_cost_usd": 0.22357359999999998,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12439,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 6187,
+   "output_tokens_details": {
+    "thinking_tokens": 3267
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12439,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 6187,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12439,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12439
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 6187,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12439,
+    "webSearchRequests": 0,
+    "costUSD": 0.22357359999999998,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 3267,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 65821,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 6187,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12439,
+    "total_tokens": 20196
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 6187,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12439,
+    "total_tokens": 20196
+   },
+   "source": "usage"
+  }
+ }
+}

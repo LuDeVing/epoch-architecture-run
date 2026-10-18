@@ -1,0 +1,132 @@
+{
+ "node": "mlp_swiglu",
+ "ts": "2026-10-15T01:15:22",
+ "queries": [
+  "modded-nanoGPT speedrun ReLU squared MLP record",
+  "GLU variants improve transformer SwiGLU ReLU^2 comparison small language models arXiv 2025",
+  "Primer squared ReLU depthwise convolution MLP language model",
+  "non-uniform FFN width across layers transformer layer-wise scaling OpenELM FFN ratio",
+  "MLP token shift or short causal convolution in FFN gated language model ablation 2025",
+  "FFN output normalization post-norm sandwich norm MLP output RMS growth Gemma OLMo 2 ablation",
+  "The Devil is in the Condition Numbers GLU better than non-GLU",
+  "Masked Gated Linear Unit MGLU results SwiGLU perplexity"
+ ],
+ "known": [
+  {
+   "name": "Squared ReLU in the FFN (Primer)",
+   "mechanism": "Replace ReLU with ReLU² in the feed-forward block, found by evolutionary search over transformer primitives.",
+   "effect": "The paper reports this as the single largest gain in Primer. Primer as a whole cut training cost about 4x at 500M parameters. At 1.9B it matched the baseline's one-shot quality with roughly 1/3 of the compute.",
+   "where": "500M to 1.9B parameter decoder LMs on C4, T5-style comparison",
+   "url": "https://arxiv.org/pdf/2109.08668"
+  },
+  {
+   "name": "ReLU² in modded-nanoGPT speedrun",
+   "mechanism": "ReLU² replaces GELU in a non-gated MLP, bundled with padded embeddings, zero-init projections and QK-norm.",
+   "effect": "This bundle took the record to 15.2 minutes (record log entry dated 10/14/24). ReLU² is still part of the speedrun architecture. The summary I read does not isolate its individual contribution.",
+   "where": "GPT-2 small (124M) speedrun track on 8xH100",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "name": "ReLU² vs ReLU vs SwiGLU at matched parameters",
+   "mechanism": "Compare ReLU, ReLU², ReGLU and SwiGLU at equal parameter counts, and measure sparsity as well as accuracy.",
+   "effect": "Average accuracy was about 50.5 for both SwiGLU and ReLU², and 48.9 for ReLU. ReLU² gives higher activation sparsity.",
+   "where": "1.3B-parameter models",
+   "url": "https://arxiv.org/pdf/2402.03804"
+  },
+  {
+   "name": "GLU variants (SwiGLU, GEGLU, ReGLU)",
+   "mechanism": "A gated MLP multiplies an activated gate projection by a linear value projection.",
+   "effect": "SwiGLU and GEGLU gave the best perplexity among the variants tested. I did not confirm the exact numbers.",
+   "where": "T5-style models",
+   "url": "https://arxiv.org/pdf/2002.05202"
+  },
+  {
+   "name": "Layer-wise scaling of FFN width (OpenELM)",
+   "mechanism": "FFN multiplier and head count grow linearly with depth, so early layers get narrower FFNs and later layers get wider ones.",
+   "effect": "OpenELM reports a 2.36% accuracy gain over OLMo at about 1B parameters while using 2x fewer pre-training tokens. That comparison is confounded with other changes.",
+   "where": "270M to 3B parameters",
+   "url": "https://arxiv.org/pdf/2404.14619"
+  },
+  {
+   "name": "Layer-wise scaling variants (Crown, Frame, Reverse)",
+   "mechanism": "Redistribute FFN width and head count across depth using 2-point or 3-point linear interpolation.",
+   "effect": "All variants reached similar losses and beat an equal-cost uniform baseline without a large throughput drop. Larger scales are untested. One commenter reports a dtype bug in the data pipeline, which I could not verify.",
+   "where": "180M parameters, 5B tokens",
+   "url": "https://arxiv.org/pdf/2509.06518"
+  },
+  {
+   "name": "Primer depthwise convolution (local mixing)",
+   "mechanism": "Add a depthwise convolution after the Q, K and V projections to bring in local neighbor information. This sits in attention, not the MLP.",
+   "effect": "Together with squared ReLU it forms Primer-EZ. The authors say it is easy to implement and transfers across codebases.",
+   "where": "500M to 1.9B parameters",
+   "url": "https://arxiv.org/pdf/2109.08668"
+  },
+  {
+   "name": "Shift-FFN (adjacent-token differences in the FFN)",
+   "mechanism": "Add an adjacent-token difference term to the FFN input so the MLP sees local neighbor information. The authors say it works with GLU-style FFNs.",
+   "effect": "Used with LoRA, it gave higher math-reasoning accuracy and fewer cyclical reasoning loops than standard LoRA or full fine-tuning. Pretraining was not tested.",
+   "where": "Fine-tuning of reasoning LLMs",
+   "url": "https://arxiv.org/pdf/2505.17153"
+  },
+  {
+   "name": "Peri-LN (normalization on sublayer outputs)",
+   "mechanism": "Apply a norm to the input and also to the output of each sublayer, as in Gemma 2 and OLMo 2. The post-MLP norm divides by the output magnitude, which bounds weight gradients.",
+   "effect": "The authors report more stable training and bounded activation variance than Pre-LN.",
+   "where": "Up to about 3.2B parameters",
+   "url": "https://arxiv.org/pdf/2502.02732"
+  },
+  {
+   "name": "Masked Gated Linear Unit (MGLU)",
+   "mechanism": "Replace the separate gate and value matrices with one shared matrix and learned binary masks, which cuts memory reads.",
+   "effect": "SwiMGLU matched or beat SwiGLU on downstream accuracy. The FlashMGLU kernel is 34% faster and 47% more memory-efficient than standard GLUs on an RTX5090. I did not find perplexity numbers.",
+   "where": "159M and 1.08B parameters, Llama-3-style",
+   "url": "https://arxiv.org/pdf/2506.23225"
+  }
+ ],
+ "failed": [
+  {
+   "name": "SwiGLU gave no clear gain in Falcon",
+   "why": "Falcon's authors saw no clear zero-shot benefit from SwiGLU at 1B and 3B, so they did not adopt it. They suggested the result depends on hyperparameter tuning.",
+   "url": "https://arxiv.org/pdf/2311.16867"
+  },
+  {
+   "name": "ReLU² does not beat SwiGLU in accuracy at matched parameters",
+   "why": "ReLU² only tied SwiGLU (about 50.5 each). Its advantage is sparsity and efficiency, not lower loss.",
+   "url": "https://arxiv.org/pdf/2402.03804"
+  },
+  {
+   "name": "OpenELM layer-wise scaling gain is not isolated",
+   "why": "OpenELM had no targeted ablation of layer-wise scaling, so its benefit is ambiguous. Follow-up work only found similar losses across variants at small scale.",
+   "url": "https://arxiv.org/pdf/2509.06518"
+  }
+ ],
+ "open": [
+  {
+   "direction": "Depth-dependent FFN width, reallocating parameters between attention and MLP across the 12 layers (compare 'Reverse' and 'Crown' shapes) at 21M parameters and 50M tokens.",
+   "why": "Existing evidence is at 180M parameters or larger, is confounded, and has not been tested at large scale. The uniform-width assumption has not been checked in a latent-attention, 4-stream-residual recipe.",
+   "url": "https://arxiv.org/pdf/2509.06518"
+  },
+  {
+   "direction": "Token-shift or short causal convolution on the gated MLP input, so the MLP sees neighbor tokens, tested in pretraining.",
+   "why": "Shift-FFN was only tested in fine-tuning. I found no pretraining ablation of a short convolution inside a SwiGLU FFN.",
+   "url": "https://arxiv.org/pdf/2505.17153"
+  },
+  {
+   "direction": "Output normalization or depth-based gating of the MLP branch (Peri-LN style) in a recipe whose MLP output RMS grows to 10.9.",
+   "why": "Peri-LN argues output norms bound variance and gradients. Its effect on loss in a mixed-stream residual with QK-norm is untested.",
+   "url": "https://arxiv.org/pdf/2502.02732"
+  },
+  {
+   "direction": "ReLU² (or other sparse or polynomial) gating inside a gated MLP, replacing SiLU.",
+   "why": "ReLU² was compared with SwiGLU only at 1.3B, with a tie on accuracy. Whether a squared activation helps the gate in a GLU at a very small token budget is not established.",
+   "url": "https://arxiv.org/pdf/2402.03804"
+  },
+  {
+   "direction": "Shared-matrix or masked gating (MGLU) to buy a wider hidden size at the same parameter count.",
+   "why": "MGLU matched SwiGLU on downstream accuracy while using fewer weight reads. Its perplexity at small scale and its use as a parameter-reallocation tool are not reported.",
+   "url": "https://arxiv.org/pdf/2506.23225"
+  }
+ ],
+ "backend": "cli_json",
+ "source": "web"
+}

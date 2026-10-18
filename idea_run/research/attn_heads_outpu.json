@@ -1,0 +1,132 @@
+{
+ "node": "attn_heads_outpu",
+ "ts": "2026-10-15T01:15:17",
+ "queries": [
+  "gated attention per-head sigmoid gate after SDPA output Qwen \"Gated Attention for Large Language Models\"",
+  "modded-nanoGPT speedrun record log attention heads value embeddings sliding window per-head gate",
+  "number of attention heads head dimension small language model ablation head_dim 64 vs 128 fewer larger heads",
+  "differential transformer attention noise cancellation heads small scale results",
+  "Multi-head Latent Attention MLA vs GQA ablation head count small model 2025 arXiv",
+  "hybrid sliding window global attention layers ratio small LM ablation per-layer window sizes 2025",
+  "talking-heads attention OR head mixing OR \"collaborative attention\" OR \"mixture of attention heads\" language model results",
+  "value residual learning ResFormer value embeddings attention small transformer improvement"
+ ],
+ "known": [
+  {
+   "name": "Head-specific sigmoid gate on SDPA output (Gated Attention, Qwen)",
+   "mechanism": "Multiply each head's SDPA output elementwise by sigmoid(X·Wθ), computed from the layer input, before the output projection.",
+   "effect": "Across 30 variants, this gate gave consistent gains over the baseline. It also improved training stability, tolerated larger learning rates, cut massive activations and attention sinks, and improved long-context extrapolation. A blog write-up reports first-token attention falling from 46.7% to 4.8%; that figure is not from the paper. Qwen3-Next uses this gate.",
+   "where": "15B MoE and 1.7B dense models, 3.5T tokens",
+   "url": "https://arxiviq.substack.com/p/neurips-2025-gated-attention-for"
+  },
+  {
+   "name": "Sparse per-head attention gate on 12 residual channels (modded-nanoGPT speedrun)",
+   "mechanism": "Each head's output gets a sigmoid gate fed only by the first 12 dimensions of the residual stream, which is a very cheap gate.",
+   "effect": "Part of the speedrun record sequence that cut the world-record time by about 20%. The write-up says it speeds up updates and reduces BOS attention-sink behavior. No isolated number was found.",
+   "where": "GPT-2-small-scale speedrun, ~124M",
+   "url": "https://www.greaterwrong.com/posts/j3gp8tebQiFJqzBgg/how-the-nanogpt-speedrun-wr-dropped-by-20-in-3-months"
+  },
+  {
+   "name": "Value embeddings with per-head gate (speedrun and nanochat)",
+   "mechanism": "Extra token embeddings are mixed into attention values, often on alternating layers. The nanochat variant gates them per head from the first 32 input channels with a 2·sigmoid range.",
+   "effect": "Adopted as speedrun record 14 (4.41 min). No isolated loss delta found.",
+   "where": "modded-nanoGPT and nanochat, ~124M and larger",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "name": "Long-short sliding-window attention pattern",
+   "mechanism": "Alternate short-window and long-window layers, with window-size warmup and YaRN, instead of full context everywhere.",
+   "effect": "Part of record 16 (3.80 min), together with a separate block mask. Gemma 3 uses 5:1 local-to-global with a 1024 window. A secondary summary says the ablation found only a slight perplexity cost.",
+   "where": "modded-nanoGPT ~124M; Gemma 3 at large scale",
+   "url": "https://sebastianraschka.com/llm-architecture-gallery/swa/"
+  },
+  {
+   "name": "Value Residual Learning (ResFormer / SVFormer)",
+   "mechanism": "Add a residual path from the first layer's value vectors to the values of every later layer. SVFormer shares the first layer's values across all layers.",
+   "effect": "Matches baseline validation loss with about 16% fewer parameters and about 20% less data. SVFormer roughly halves the KV cache at a small cost.",
+   "where": "Language models of roughly 82M to 1.6B parameters",
+   "url": "https://arxiv.org/html/2410.17897v4"
+  },
+  {
+   "name": "NormFormer HeadScale",
+   "mechanism": "Scale each head's output by a learned scalar, initialized at 1, before the output projection. Combined with extra norms to balance gradient magnitudes between early and late layers.",
+   "effect": "The paper reports better pretraining quality with negligible parameters. The stated aim is to shrink early-layer gradients and raise late-layer gradients.",
+   "where": "125M to 2.7B",
+   "url": "https://arxiv.org/pdf/2110.09456"
+  },
+  {
+   "name": "Grouped low-rank output projection (DeepSeek-V4)",
+   "mechanism": "Split head outputs into groups, project each group to a smaller intermediate dimension, then combine and project to the hidden size.",
+   "effect": "Reduces the cost of projecting a huge concatenated head output to d_model. This is a cost saving, not a loss gain. Group counts come from secondary sources (e.g. 128 heads, 16 groups, 1024 intermediate).",
+   "where": "DeepSeek-V4 Pro scale",
+   "url": "https://arxiv.org/pdf/2606.19348"
+  },
+  {
+   "name": "MLA vs MHA vs GQA vs GTA/GLA at fixed query-head count",
+   "mechanism": "Compare KV-sharing schemes (MHA, GQA-4, MQA, GTA, MLA, GLA) with FFN width and 12 query heads held fixed.",
+   "effect": "MLA had the best average perplexity (40.80), ahead of MHA (41.94) and GQA-4 (44.16), but at 181M parameters versus 174M for GQA-4, so it is not parameter-matched.",
+   "where": "188M-parameter models",
+   "url": "https://arxiv.org/pdf/2505.21487"
+  },
+  {
+   "name": "Differential attention",
+   "mechanism": "Subtract two softmax attention maps to cancel common-mode noise and sparsify attention.",
+   "effect": "Original paper claims gains across sizes and token counts. A follow-up at 125M reports about +0.7% average downstream accuracy for DIFF, with the top-half-of-layers variant slightly better than all layers.",
+   "where": "125M (follow-up); original paper's range",
+   "url": "https://arxiv.org/pdf/2508.18387"
+  },
+  {
+   "name": "Talking-heads attention",
+   "mechanism": "Learned linear mixing across the head dimension of the attention logits, before and after the softmax.",
+   "effect": "Better masked-LM perplexity and better transfer to downstream tasks, with modest extra compute.",
+   "where": "T5-style models",
+   "url": "https://arxiv.org/pdf/2003.02436"
+  }
+ ],
+ "failed": [
+  {
+   "name": "Shrinking the QK dimension below head_dim 64",
+   "why": "A Pythia-160M ablation found severe degradation when the query-key dimension was reduced below 64, even at fixed parameter budget. Very small heads are a bottleneck, which argues against many smaller heads.",
+   "url": "https://arxiv.org/pdf/2504.20938"
+  },
+  {
+   "name": "Changing head count at fixed hidden size (PanGu-π Pro)",
+   "why": "The authors report that head count and head dimension (they use 128) do not noticeably affect speed or accuracy when hidden size is fixed. This suggests head-split tuning may be near-neutral.",
+   "url": "https://arxiv.org/pdf/2402.02791"
+  },
+  {
+   "name": "Aggressive KV sharing via GQA-4 at small scale",
+   "why": "At 188M, GQA-4 was clearly worse than MHA and MLA (average perplexity 44.16 versus 41.94 and 40.80). Plain KV-head reduction is not free, so it is a cost-saving move rather than a quality one.",
+   "url": "https://arxiv.org/pdf/2505.21487"
+  }
+ ],
+ "open": [
+  {
+   "direction": "Test head-dimension sweeps (3×128, 12×32, 6×64) at 384 width with a latent-attention KV path. No controlled sweep for a latent-attention model of this size was found.",
+   "why": "The evidence is mixed: tiny QK dimensions hurt, while 128 looks neutral or better. The penalty from small heads is said to shrink with model size, so results at 21M may not transfer.",
+   "url": "https://arxiv.org/pdf/2609.25802"
+  },
+  {
+   "direction": "Combine a cheap sparse per-head gate on the SDPA output with the output projection, and check whether it removes the 10x layer-0 gradient imbalance.",
+   "why": "The gate is known to reduce attention sinks and stabilize training, and HeadScale targets the early-layer gradient imbalance. Their interaction with QK-norm and four-stream residual mixing has not been reported.",
+   "url": "https://arxiv.org/pdf/2110.09456"
+  },
+  {
+   "direction": "Per-layer heterogeneous windows with stochastic window sizes during training, rather than full context in every layer.",
+   "why": "SWAX found that short windows mixed with global layers work best and that stochastic window sizing helps. That was tested with recurrent layers at 1.4B and 7B, not in a pure-attention small model.",
+   "url": "https://arxiv.org/pdf/2509.24552"
+  },
+  {
+   "direction": "Grouped or low-rank output projection as a regularizer or capacity reallocation at small width, saving wo parameters for other uses.",
+   "why": "DeepSeek-V4 uses it for efficiency at huge head counts. Nobody reported whether it costs or helps quality when the head output is only 384-dimensional.",
+   "url": "https://arxiv.org/pdf/2606.19348"
+  },
+  {
+   "direction": "Apply differential or other noise-cancelling attention only to some layers (e.g. the top half), possibly paired with fewer, larger heads.",
+   "why": "The 125M follow-up found the top-half-only variant slightly better than all layers, but it has not been tested with latent attention or at the 21M scale.",
+   "url": "https://arxiv.org/pdf/2508.18387"
+  }
+ ],
+ "backend": "cli_json",
+ "source": "web"
+}

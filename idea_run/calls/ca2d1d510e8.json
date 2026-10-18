@@ -1,0 +1,120 @@
+{
+ "call_id": "ca2d1d510e8",
+ "role": "research",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "{\"known\":[{\"name\":\"TransMLA expressiveness argument (MLA vs GQA at equal KV cache)\",\"mechanism\":\"GQA can always be rewritten as an MLA with the same KV cache size, but MLA cannot always be rewritten as GQA, so MLA is strictly more expressive per cached dimension.\",\"effect\":\"The paper converts GQA models such as Qwen2.5-7B and LLaMA-2-7B to MLA. It reports 93% KV cache compression on LLaMA-2-7B and a 10.6x speedup at 8K context. These are post-training conversions, not from-scratch training with a latent-size sweep.\",\"where\":\"Qwen2.5-7B and LLaMA-2-7B conversion, 7B scale\",\"url\":\"https://arxiv.org/pdf/2502.07864\"},{\"name\":\"Latent MHA for small language models (MLA + RoPE, half-rank latent)\",\"mechanism\":\"MLA with the latent rank set to half the hidden size, with RoPE applied to the decompressed q/k.\",\"effect\":\"Validation loss rose only 0.3% versus MHA with a 45% smaller KV cache. Without RoPE, MLA trailed MHA by 3-5%. With RoPE it beat MHA by about 2%. The half-rank model ran 1.4x faster than full-rank MLA.\",\"where\":\"30M-parameter GPT on 100k synthetic stories. Treat the evidence as weak (tiny dataset, KDD workshop paper). These figures come from the abstract summary.\",\"url\":\"https://arxiv.org/html/2506.09342v2\"},{\"name\":\"Low-Rank Key Value Attention (LRKV)\",\"mechanism\":\"Each layer has one shared full-rank K/V projection, and each head adds a small trainable low-rank residual. This keeps head diversity while sharing most of the KV.\",\"effect\":\"v2 reports the lowest test loss among MHA, MQA/GQA and MLA, using 45-53% of MHA's KV cache. It reaches baseline quality 18-25% faster in steps. Figures differ between v1 and v2, and I did not check them against the full paper.\",\"where\":\"128M to 6.3B parameters\",\"url\":\"https://arxiv.org/html/2601.11471v2\"},{\"name\":\"Grouped-Tied Attention (GTA) and Grouped Latent Attention (GLA)\",\"mechanism\":\"GTA ties key and value into one state per query-head group, using the full tied state as the value. GLA is a latent attention variant that is easier to shard.\",\"effect\":\"GTA matches GQA quality with about half the KV cache. GLA matches MLA quality, and its kernel is up to 2x faster than FlashMLA in decoding.\",\"where\":\"Tri Dao group, ICML 2025 workshop. Model sizes were not checked.\",\"url\":\"https://arxiv.org/pdf/2505.21487\"},{\"name\":\"Tensor Product Attention (TPA)\",\"mechanism\":\"Q, K and V are factorized into input-dependent low-rank tensor-product components. This is natively compatible with RoPE, unlike MLA's extra decoupled RoPE parameters.\",\"effect\":\"The authors report lower validation loss and perplexity than MHA, MQA, GQA and MLA on FineWeb-Edu 100B. I did not confirm exact numbers or the size of the gap.\",\"where\":\"Pretraining at several sizes on FineWeb-Edu 100B, per secondary summaries\",\"url\":\"https://arxiv.org/html/2501.06425v6\"},{\"name\":\"Decoupled RoPE in MLA (shared rotary sub-vector)\",\"mechanism\":\"A single rotary sub-vector is shared across heads, so position information bypasses the latent compression.\",\"effect\":\"In a random-matrix and spectral study, only the decoupled variant avoided early spikes and rank collapse. Applying RoPE before compression (pre-RoPE) did not. This is a preprint analysis, not a downstream quality ablation.\",\"where\":\"Analysis of MLA variants\",\"url\":\"https://arxiv.org/html/2507.09394v1\"},{\"name\":\"Multi-head Temporal Latent Attention (MTLA)\",\"mechanism\":\"Adds compression along the time axis on top of MLA's latent compression. A hyper-network merges temporally adjacent KV vectors, and a stride-aware causal mask keeps training parallel.\",\"effect\":\"On speech translation it gave a 5.3x speedup and 8.3x less GPU memory versus MHA with quality maintained. Results also cover speech recognition and summarisation.\",\"where\":\"Speech translation, recognition and text summarisation tasks (NeurIPS 2025)\",\"url\":\"https://arxiv.org/pdf/2505.13544\"},{\"name\":\"DeepSeek-V4 shared-KV compressed attention (CSA/HCA)\",\"mechanism\":\"Key and value share one vector (2x KV reduction). Token blocks are compressed about 4x (CSA) or about 128x (HCA), with top-k sparse selection and a 128-token sliding window.\",\"effect\":\"At 1M context it needs 27% of V3.2's per-token FLOPs and 10% of its KV cache. These numbers come from secondary summaries, not the primary report.\",\"where\":\"DeepSeek-V4 Pro (1.6T total, 49B active) and Flash (284B total, 13B active), long context\",\"url\":\"https://boringbot.substack.com/p/deepseek-v4-architecture-deep-dive\"}],\"failed\":[{\"name\":\"MLA without RoPE at small scale\",\"why\":\"Without RoPE, MLA trailed vanilla MHA by 3-5% in validation loss at 30M parameters. Position handling therefore matters more than latent width when the model is small.\",\"url\":\"https://arxiv.org/html/2506.09342v2\"},{\"name\":\"Uniform latent rank across layers (CARE paper, MLA conversion)\",\"why\":\"Giving every layer the same rank causes activation drift and worse attention fidelity. Per-layer rank allocation helps. This was shown for converting pretrained models to MLA, not for training from scratch, so transfer is unverified.\",\"url\":\"https://arxiv.org/pdf/2603.17946\"},{\"name\":\"GQA/MQA-style KV sharing for quality\",\"why\":\"Sharing KV across heads reduces memory but constrains head-level diversity. Both LRKV and TransMLA position GQA/MQA as quality-losing at matched cache, so sharing is not a free win.\",\"url\":\"https://arxiv.org/html/2601.11471v2\"}],\"open\":[{\"direction\":\"Per-head low-rank residuals on top of a shared latent KV, so K and V are not tied to one 128-dim bottleneck for all six heads\",\"why\":\"LRKV's shared-plus-residual design beat MHA, GQA and MLA in loss at 128M and above. Nobody has tested it on top of an MLA-style normed latent, nor at roughly 20M parameters with a 1024 context.\",\"url\":\"https://arxiv.org/html/2601.11471v2\"},{\"direction\":\"Per-layer latent rank allocation, trained from scratch\",\"why\":\"CARE shows uniform rank hurts fidelity when converting pretrained models. Training from scratch with a layer-varying rank (or splitting the latent into separate K and V parts) has not been tested at small scale.\",\"url\":\"https://arxiv.org/pdf/2603.17946\"},{\"direction\":\"Tied key-value state (GTA-style, with V equal to the full tied state) instead of separate expansion matrices\",\"why\":\"GTA reaches GQA quality at half the cache. The cost-for-nothing question here is whether a non-cached, short-context model gains by dropping the 128->768 expansion, or by giving the freed parameters to Q.\",\"url\":\"https://arxiv.org/pdf/2505.21487\"},{\"direction\":\"Low-rank, input-dependent factorization of Q as well as K/V (TPA-style), so q and kv share a subspace\",\"why\":\"TPA claims better loss than MLA, MHA and GQA with RoPE-native factorized Q, K and V. Whether it holds at 21M parameters and 50M tokens is untested.\",\"url\":\"https://arxiv.org/html/2501.06425v6\"},{\"direction\":\"Decoupled-RoPE sub-vector shared across heads alongside a normed latent\",\"why\":\"Spectral analysis suggests the shared rotary path prevents rank collapse and outliers. No ablation checks how RMS-normalising the latent interacts with key/value scale, and my search found nothing on latent normalisation.\",\"url\":\"https://arxiv.org/html/2507.09394v1\"}],\"queries\":[\"Multi-head Latent Attention small scale ablation latent dimension quality DeepSeek-V2 MLA vs GQA\",\"MLA latent KV compression arXiv 2025 TransMLA expressive power GQA vs MLA\",\"modded-nanoGPT speedrun attention changes value embeddings, QK-norm, key offset, latent attention\",\"Multi-head Temporal Latent Attention OR Grouped Latent Attention OR Multi-matrix Factorization Attention OR Hybrid-head latent arXiv\",\"Hardware-Centric Analysis of DeepSeek MLA / Multi-matrix Factorization Attention Step-3 / Grouped-head latent attention results\",\"Mehta 2506.09342 Latent Multi-Head Attention for Small Language Models\",\"Low-Rank Key-Value Attention LRKV 2601.11471 results\",\"DeepSeek-V4 compressed sparse attention shared key value MQA latent technical report\",\"Hardware-Efficient Attention for Fast Decoding Grouped-Tied Attention Grouped Latent Attention arXiv 2505.21487\",\"Tensor Product Attention Is All You Need low-rank factorized Q K V validation loss vs MLA\",\"MLA latent rank too small bottleneck degrade quality; latent normalization; decoupled RoPE ablation small model\"]}",
+ "usage": {
+  "input_tokens": 159008,
+  "output_tokens": 15958,
+  "cache_read_input_tokens": 32720,
+  "cache_creation_input_tokens": 18318,
+  "total_tokens": 226004
+ },
+ "cost_usd": 0.794902,
+ "duration_ms": 54068,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 4000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 226004,
+ "over_cap": true,
+ "meta": {
+  "card": "research",
+  "operator": "attn_latent_kv",
+  "note": "web search: Sequence mixing: latent KV compression and expansion"
+ },
+ "prompt_chars": 3246,
+ "raw": {
+  "duration_api_ms": 103676,
+  "stop_reason": "end_turn",
+  "session_id": "a85607e1-509a-4160-b62c-5aa1e02f966b",
+  "total_cost_usd": 0.2647755,
+  "usage": {
+   "input_tokens": 8,
+   "cache_creation_input_tokens": 18318,
+   "cache_read_input_tokens": 32720,
+   "output_tokens": 4667,
+   "output_tokens_details": {
+    "thinking_tokens": 114
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 18318,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 3334,
+     "cache_read_input_tokens": 15924,
+     "cache_creation_input_tokens": 4201,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 4201
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 8,
+    "outputTokens": 4667,
+    "cacheReadInputTokens": 32720,
+    "cacheCreationInputTokens": 18318,
+    "webSearchRequests": 0,
+    "costUSD": 0.12323,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 114,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   },
+   "claude-haiku-5-5": {
+    "inputTokens": 159000,
+    "outputTokens": 11291,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 12,
+    "costUSD": 0.14154549999999996,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 2838,
+    "canonicalModel": "claude-haiku-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 12,
+  "duration_ms": 52763,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 4667,
+    "cache_read_input_tokens": 32720,
+    "cache_creation_input_tokens": 18318,
+    "total_tokens": 55713
+   },
+   "model_usage_sum": {
+    "input_tokens": 159008,
+    "output_tokens": 15958,
+    "cache_read_input_tokens": 32720,
+    "cache_creation_input_tokens": 18318,
+    "total_tokens": 226004
+   },
+   "source": "modelUsage"
+  }
+ }
+}

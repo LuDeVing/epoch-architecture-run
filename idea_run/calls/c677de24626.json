@@ -1,0 +1,110 @@
+{
+ "call_id": "c677de24626",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "CHAIN:\nL1: Scaling the MLP output by c = exp(a)/ema_rms (ema detached) makes each layer's MLP write RMS follow exp(a) rather than the matrix norms | quantity: per-layer MLP write RMS before `combine`, divided by exp(a) | baseline: unmeasured (the 1.403→10.893 column is the residual stream after each block, not the MLP write) | expect: ratio within [0.5, 2] once the EMA settles; overshoot during warmup of e^{r·τ} (r = raw growth rate per step, τ = EMA lag in steps) | breaks if: ratio stays outside [0.5, 2] after step 20, or tracks raw ||W|| growth.\nL2: Bounded MLP writes → less residual-stream growth across depth | quantity: residual RMS after block 11 / after block 0 | baseline: x7.8 (1.403→10.893 at step 100) | expect: down to roughly x3–x6, but only if MLP writes are most of the stream | breaks if: growth stays ≥ x7 (attention writes dominate, and they are untouched).\nL3: Write scale no longer depends on ||W|| → Muon spends its fixed-size updates on direction → MLP weight norms grow less and the relative-update spread narrows | quantity: ||W_gate||, ||W_up||, ||W_down|| per layer; ||dw||/||w|| median and max | baseline: median 0.02009, max 0.03265; weight norms unmeasured | expect: MLP ||W|| at or below baseline; spread at most x1.5 | breaks if: MLP ||W|| grows faster than baseline (radial-gradient ratchet), which shrinks relative updates later in training.\nL4: Smaller stream growth and steadier updates → equal or lower loss | quantity: mean loss over steps 40–45 (same total-step schedule as the baseline); final exam val loss | baseline: about 6.6–6.7 at steps 40–45 (6.59 at step 51); final is the pooled baseline mean | expect: within +0.03 at steps 40–45; final in the band −0.005 to −0.03 | breaks if: more than +0.03 at steps 40–45, or the final value does not beat the pooled mean by more than 0.005 at p<0.01.\nWEAKEST: L4 (pre-norm makes every read scale-invariant, so there is no direct path from absolute stream RMS to loss). L3 is next weakest, and L1 has a concrete failure risk from a's learning rate (Q3).\n\nQUESTIONS:\nQ1: In this pre-norm stack, can absolute residual RMS affect loss at all, or only the ratio of each write to the accumulated stream? | decides: absolute target (write RMS = exp(a)) vs relative target (write RMS = exp(a)·ema of block-input stream RMS)\nA1: Every read goes through an RMSNorm (`n1`, `n2`, final `norm`), so a global rescale of the stream does not change the logits. Only the relative share of each write matters: the share of late layers shrinks as the stream grows. Whether that shrinking costs loss at this scale is unknown. If the mechanism is real, the relative target is the one that acts on it.\n\nQ2: Under AGC, will Muon grow the MLP matrices less (as predicted) or more? | decides: leave W free vs add a norm constraint or extra weight decay on the MLP matrices\nA2: Probably more. With a detached EMA, each step's gradient still contains a \"make the output bigger\" radial component. Muon applies fixed-size updates regardless of gradient scale, so ||W|| keeps growing while the EMA cancels the effect on the output. That is the scale-invariant norm-growth effect, with effective step size falling as ||W|| grows (https://arxiv.org/abs/1803.01814, https://arxiv.org/abs/1706.05350). Weight decay 0.1·lr is the only brake. This is unmeasured, so log ||W||.\n\nQ3: Can a move far enough under the shared AdamW group (lr 3e-3, wd 0.1)? | decides: a in the existing \"other\" group vs its own group (higher lr, no weight decay)\nA3: Probably not. Adam moves a by at most about lr per step: roughly 0.12 nats over 45 steps and about 4 nats over the whole 1525-step run. In the baseline, writes go from about 0.01 (init) to O(1) by step 100, about 4.6 nats. A gain-1 init would leave the MLP nearly silenced early while attention writes grow freely. Give a its own group with lr around 0.03–0.1 and no weight decay. Weight decay would also pull a toward 0, i.e. gain 1/ema.\n\nQ4: How should a and the EMA be initialised? | decides: a = 0 vs a = log(first measured write RMS); EMA analytic init vs lazy init on the first training forward\nA4: Estimated initial write RMS is about 0.01. Inputs are normalized to RMS 1; w_gate/w_up std 0.02 gives pre-activation std of about 0.39; silu·up gives about 0.077; w_down std 0.00408 over 1077 inputs gives about 0.010. So a = 0 means gain ≈ 100, which trips the idea's own kill bound (>50) at step 1. Use lazy init: a sentinel EMA value replaced via `torch.where` on the first training forward (no `.item()` sync), and a = log(target), where the target comes from Q3/Q11.\n\nQ5: What EMA momentum, and updated per micro-batch or per optimizer step? | decides: momentum 0.9 vs 0.99 per micro-batch; update every micro-batch vs once per step\nA5: Early Muon relative updates are large. For w_down: lr 0.02 × ||orthogonal update||_F ≈ √384 ≈ 19.6 gives 0.39 per step against an init norm of 2.6, about 15% per step. Growth at rate r with lag τ leaves a constant overshoot of e^{rτ}. A 12-step window (0.99 per micro-batch with 8 micro-batches per step) could overshoot several-fold during warmup. Use about 0.9 per micro-batch, or bias-corrected momentum that ramps up. \"Slow\" is safe only after the warmup phase.\n\nQ6: Does the exam call `model.eval()` or run under `no_grad`? | decides: gate EMA updates on `self.training` only vs on `self.training and torch.is_grad_enabled()`\nA6: Unknown. Gate on both, and register the EMA as a persistent buffer so `model.pt` carries it. Otherwise the exam would update statistics on validation tokens and make results depend on batch order.\n\nQ7: Should the current batch's statistic enter the scale used for that same batch? | decides: use the previous EMA, then update vs update, then use\nA7: Update-then-use computes the RMS over all 1024 positions, so future tokens leak a tiny amount into earlier positions' scale. That is a causal violation, even if small, and train and eval would differ. Use the previous EMA, then update.\n\nQ8: Does the idea's kill bound on gain, exp(a)/ema ∈ [0.02, 50], fire by construction? | decides: keep the absolute-gain kill vs redefine it as gain relative to its step-0 value, or as write RMS / exp(a)\nA8: Likely. Raw output scales roughly with the product of three matrix norms. By step 45, raw growth is somewhere between about 1.6x (random-walk updates) and about 45x (aligned updates). The baseline reaching residual RMS 1.4 by step 100 suggests the aligned end. With a pinned (Q3), the gain falls toward or below 0.02 with the output still healthy. The bound measures W growth, not failure.\n\nQ9: Are MLP writes or attention writes the bigger part of the stream growth? | decides: AGC on the MLP only (as specified) vs MLP plus attention\nA9: Unmeasured. Layer 0 shows anomalous gradients in both sublayers (attention 0.29, MLP 0.23, z 7.0 and 5.8). Log per-sublayer write RMS in the baseline before building; if attention dominates, L2 cannot hold.\n\nQ10: How should the 45-step test match the baseline? | decides: `--smoke-steps 45` vs a 100-step run read at steps 40–45\nA10: `lr_mult` scales with total steps. At 45 steps, warmup is 1 step and cooldown starts at step 31. At 100 steps, warmup is 2 steps and cooldown starts at 70. A 45-step run is therefore not matched to the 100-step baseline curve. Run 100 steps (or rerun the baseline at 45) and compare steps 40–45.\n\nQ11: Should the EMA track mean-square or RMS, and in what precision? | decides: sqrt(ema(mean y²)) in fp32 vs ema(rms) in bf16\nA11: Track sqrt(ema(mean y²)) in fp32. It is the unbiased envelope and avoids bf16 rounding across 12 layers × 8 micro-batches. Compute exp(a)/ema in fp32 and cast the scalar to `y.dtype`.\n\nKNOWN:\n- Plug point: `MLP.forward`, after `w_down`, before `Block.combine` applies `2*sigmoid(write_logits)` (range 0–2) per stream. [script]\n- The MLP write scale is already reachable without the matrices: the `n2.weight` gain, `read_logits`, and `write_logits` (capped at 2x), so the BREAKS premise is only partly true. [script]\n- The 1.403→10.893 column is \"Residual stream RMS after each block\", not the MLP output RMS that the idea's mechanism cites. [measured]\n- Residual RMS increments per layer are nearly constant (about 1.3 early, about 0.65 late), i.e. roughly linear growth, which suggests correlated writes rather than random ones. [measured]\n- A 0-dim `a` falls into the AdamW \"other\" group (lr 3e-3, wd 0.1) unless split out. [script]\n- Full run is 1525 optimizer steps, warmup 30, cooldown from step 1067, 8 micro-batches of 4×1024 per step. [script]\n- Muon normalizes gradient scale, so c rescales W gradients without changing Muon's step size; it does change the global `clip_grad_norm_` factor seen by the Adam parameters. [script]\n- Initial MLP write RMS is about 0.01 (derivation in A4). [belief]\n- Muon per-step ||ΔW||_F is about 0.39 for w_down and about 0.66 for w_gate/w_up at full lr, against init norms of 2.6 and 12.9. [belief]\n- Extra activation memory is about 3 MB per layer (bf16 4×1024×384 saved for the scalar multiply), about 36 MB total; compute is one reduction per layer per micro-batch, well under 1% of step time. [belief]\n- Buffers are excluded from `param_counts`; +12 parameters is negligible against C3. [script]\n- Scale-invariant weights grow in norm under gradient training and their effective lr decays: https://arxiv.org/abs/1803.01814 [web]\n- Peri-LN (normalizing sublayer outputs) bounds activation variance; its per-token output normalization is the known technique this idea must stay distinct from: https://arxiv.org/pdf/2502.02732 [web]\n- Learned scalar branch gains (ReZero, LayerScale) are the known non-normalizing relatives: https://arxiv.org/abs/2003.04887, https://arxiv.org/abs/2103.17239 [web]\n\nASSUMES:\n- Absolute write RMS matters in a pre-norm stack where every read is RMS-normalized.\n- MLP writes, not attention writes, drive the x7.8 residual growth.\n- Residual growth hurts loss at 21M parameters and 50M tokens.\n- One scalar envelope per layer is enough; channel-level imbalance is irrelevant.\n- A batch-level envelope (4 sequences) is stable enough to normalize with.\n- The gain can be learned by the same AdamW settings as norms and embeddings.\n- Running statistics from training transfer to the exam unchanged (frozen EMA).\n- Matrix norms are the only route to write magnitude (`n2.weight` and `write_logits` already provide others).\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Relative AGC (write-to-stream ratio control)\nMECHANISM: Drops \"absolute write RMS matters\". Scale the MLP write to exp(a)·ema(block-input stream RMS)/ema(write RMS), so each layer contributes a learned, fixed fraction of the stream it writes into, whatever the stream's size.\nPREDICTION: The per-layer write/stream ratio holds at exp(a) within 2x; late layers keep a share comparable to early layers instead of falling as roughly 1/depth.\nTEST: 100-step run; log write/stream ratio per layer; compare loss at steps 40–45.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\nKIND: leap\nBREAKS: a block's write magnitude is independent of how large the stream already is\nKILL: mean loss over steps 40–45 more than 0.03 nats above baseline, or any layer's ratio collapsing below 0.01\n\nSLOT: strengthen\nIDEA: Per-channel envelope (multi-band compressor)\nMECHANISM: Keep a detached EMA of per-channel RMS (384 values) of the MLP write, with a learned 384-vector log-gain, so outlier channels cannot dominate the RMSNorm reads downstream.\nPREDICTION: Max/median channel RMS of the stream drops by at least 2x; +4.6k parameters.\nTEST: 100-step run; log the channel-RMS max/median ratio at layers 0, 6 and 11.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\nKIND: port\n\nSLOT: specialise\nIDEA: Warmup-only AGC, folded into w_down\nMECHANISM: Run AGC only during the first 10% of steps, when relative updates are around 15% per step, then freeze c, multiply it into `w_down.weight`, and remove the scaling, leaving the exam architecture unchanged.\nPREDICTION: Lower loss variance across seeds over steps 0–150; final loss at least equal to baseline.\nTEST: Two 200-step runs with 3 seeds each; compare per-step loss standard deviation over steps 0–150.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\nKIND: port\n\nSLOT: port\nIDEA: AGC on the attention write (`wo`)\nMECHANISM: The same detached EMA gain on the attention branch output, targeting layer 0, where attention gradients are about 10x their neighbours' (z 7.0).\nPREDICTION: The layer-0 attention gradient anomaly shrinks below 3x its neighbours' predicted value.\nTEST: 100-step run on 3 seeds; recompute the layer-0 gradient anomaly.\nSOURCE: own\nPART: Sequence mixing: latent attention\nKIND: port\n\nSLOT: combine\nIDEA: AGC plus a fixed-norm (hyperspherical) MLP matrix projection\nMECHANISM: After each Muon step, project w_gate, w_up and w_down back to their initial Frobenius norms (as nGPT keeps weights normalized), so the gain a alone sets magnitude and the radial ratchet from A2 cannot occur.\nPREDICTION: MLP ||W|| constant by construction; ||dw||/||w|| spread at most x1.3; loss at steps 40–45 no worse than baseline.\nTEST: 100-step run; compare update spread and the loss window against plain AGC.\nSOURCE: https://arxiv.org/abs/2410.01131\nPART: Per-token computation: SwiGLU MLP\nKIND: port\n\nSLOT: other\nIDEA: Embedding envelope control\nMECHANISM: The token embedding enters the stream at RMS about 0.02, while block 0 writes about 1.4. Scale the input copy of `tok(idx)` by exp(a)/ema so the embedding keeps a learned share of the stream; the tied head is left untouched.\nPREDICTION: Loss on tokens of rank 1000–50304 (38% of tokens, losses 8.98 and 11.61) falls by at least 0.05 nats at step 100.\nTEST: 100-step run; compare per-frequency-bucket loss against the measured baseline buckets.\nSOURCE: own\nPART: Token embedding\nKIND: leap\nBREAKS: the embedding enters the stream at its raw learned scale\nKILL: mean loss over steps 40–45 more than 0.03 nats above baseline, or rank-0–100 loss more than 0.05 nats worse at step 100\n\nOPEN:\n- What is the per-layer MLP write RMS vs attention write RMS in the baseline at steps 0, 45, 100 and 1525? | build: yes | decides: MLP-only AGC vs MLP plus attention\n- Does `nano/exam.py` call `model.eval()` and/or `torch.no_grad()`? | build: yes | decides: EMA update gated on `self.training` vs on `self.training and grad enabled`\n- Does residual growth across depth measurably cost loss at this scale, e.g. via a frozen-ratio control run? | build: yes | decides: absolute target vs relative-to-stream target\n- Do MLP weight norms grow faster under AGC with Muon (the ratchet)? | build: yes | decides: W left free vs norm projection or extra weight decay\n- Which lr for a lets it track write growth without oscillating against the EMA lag? | build: yes | decides: a in the shared Adam group vs its own group with lr 0.03–0.1\n- Is the EMA momentum that is safe during warmup (about 0.9 per micro-batch) too noisy later at batch-level RMS? | build: yes | decides: fixed momentum vs a momentum schedule\n- Is the near-linear residual growth caused by a shared DC direction in the writes? | build: no | decides: n/a",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 18553,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 15704,
+  "total_tokens": 35827
+ },
+ "cost_usd": 1.688307,
+ "duration_ms": 196663,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 35827,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "mlp_swiglu-ou-k00",
+  "seed": "",
+  "note": "interrogating 'Slow batch-level gain on MLP write' gen 0 depth 0",
+  "node": "mlp_swiglu",
+  "depth": 0,
+  "gen": 0
+ },
+ "prompt_chars": 35708,
+ "raw": {
+  "duration_api_ms": 195248,
+  "stop_reason": "end_turn",
+  "session_id": "01b31b65-7ddc-4167-a95d-2c25c23d0817",
+  "total_cost_usd": 0.49701360000000006,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 15704,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 18553,
+   "output_tokens_details": {
+    "thinking_tokens": 12359
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 15704,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 18553,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 15704,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 15704
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 18553,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 15704,
+    "webSearchRequests": 0,
+    "costUSD": 0.49701360000000006,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 12359,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 195358,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 18553,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 15704,
+    "total_tokens": 35827
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 18553,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 15704,
+    "total_tokens": 35827
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,110 @@
+{
+ "call_id": "cefd4601e56",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Below are the subtraction analysis, the seed list, and seven sketches. Four are leaps built with the subtract operator.\n\nPASS 1 (scratch):\n\nSubtraction audit of each component, with what the measurements say it buys:\n- Sinkhorn mixing frozen at identity: the init is already exp of 6 times identity, so the diagonal is 0.993 after 20 iterations. The brief says such matrices drift back to identity at scale and give parity at 30M. Buys about zero loss. Costs roughly 1000 tiny kernel launches per micro-batch forward plus the backward, and 24 saved copies of the stream state. Defended removal.\n- Write gains frozen at 1: the init gains are 1.015 and 0.995, so the four streams differ by about one percent of one branch output per stage. Frozen at exactly 1 the streams stay identical forever. Buys about zero. Defended removal, or rather a flip into something structured.\n- Read softmax frozen at uniform: with near-identical streams the read cannot select anything. Buys about zero.\n- Four identical copies and the final mean: a doubly stochastic mix preserves the mean over streams, so the quantity the head reads evolves exactly as a single residual with gain equal to the mean write gain. The copies buy nothing the head can see and cost about 0.3 GB of saved activations plus fourfold elementwise traffic on the residual. The 7.8x RMS growth is the single-stream growth, untouched by the streams.\n- Conclusion: the stream axis is paid for and unused. Every leap below keeps the two defended removals, mixing to identity and learned write gains deleted, and reinvests the stream axis or its memory in one named alternative.\n\nTwelve seeds, one rule each:\n1. Delete the streams and reinvest the freed memory and parameter headroom in a 13th layer.\n2. The stream axis is a depth lag: stream k holds the residual k stages ago, read with signed weights.\n3. The stream axis is a timescale: streams are exponential moving averages of branch outputs across depth with fixed decays.\n4. The stream axis is the writer type: attention writes to streams 0 and 1, the MLP to 2 and 3.\n5. Stream 0 is the embedding and is never written; the other streams start empty.\n6. Token-dependent write router from the branch output.\n7. Token-dependent read from a linear on the stream mean.\n8. Orthogonal SO(4) mixing by a Cayley transform, signed entries, no iterations.\n9. Mixing initialized at the cyclic permutation, four interleaved residual chains.\n10. One global 4x4 mix shared by all blocks, depth-varying writes only.\n11. A readout stream that only the last four blocks write and only the head reads.\n12. Per-stream RMSNorm before the read, so streams of different scale mix on equal terms.\n\nKept: seed 1 as the operator's base leap, and seeds 2, 3 and 4 as the three farthest from the brief. Seeds 6 and 8 are ports of open items, and a write-init sweep is the tune.\n\nIDEA: Subtract the streams, add a thirteenth layer\nMECHANISM: Collapse the residual to one stream with mixing at identity and no write gains, which by the audit changes nothing the head can see, and spend the freed 0.3 GB and the 1.83M parameter headroom on a 13th block. Depth is the one axis the measurements say is under-provisioned, and the frontier recipes keep the stream machinery only because it is cheap behind fused kernels, which this card lacks.\nPREDICTION: Non-embedding parameters rise to about 23.07M, under the 23.37M cap. Step time rises by at most 8 percent from the extra block minus the stream overhead, so under 5.2 s. Peak memory stays under 5.6 GB. Validation loss falls by 0.01 to 0.02 nats, the usual gain of one extra layer at this depth.\nTEST: Build-only for the parameter count, a 3-step timing and peak memory check, then 45 matched steps against the baseline on one seed.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The residual must be four streams mixed by a doubly stochastic matrix; here it is one stream and the budget goes to depth.\nKEEPS: Every block, norm, attention and MLP is unchanged, as is the tied head and the optimizer split.\nP_SUCCESS: 0.2\nKILL: Loss averaged over steps 41 to 45 above the same-seed baseline by more than 0.02 nats, or peak memory above 5.6 GB.\n\nIDEA: Delay-line residual with signed reads\nMECHANISM: Reinterpret the stream axis as depth lag: each sublayer reads a signed combination of the current residual and the residuals one, two and three stages earlier, with weights initialized to read only the current one, and writes its branch into the single live residual. Differences between lagged residuals are exactly the last few branch outputs, so a block can add or subtract its recent predecessors per stage, the depth-local version of Attention Residuals and MUDD with zero Sinkhorn and the subtractive mixing the brief says the Birkhoff constraint forbids.\nPREDICTION: Parameter count falls by about 1,300. Step time drops below the baseline because no 4x4 mix and no fourfold residual traffic remain. Peak memory falls by about 0.2 GB since the lagged residuals are already saved for backward. Loss curve matches the baseline for the first 20 steps and then runs below it as the read weights move off their init.\nTEST: 3-step timing and memory, then 45 matched steps on one seed; also log the signed read weights of the final checkpoint to confirm they leave the one-hot init.\nSOURCE: own\nTARGET: residual RMS growth, down, and gradient norm spread, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Streams are copies of the same state mixed by a static non-negative matrix; here streams are the same residual at different depths read with signed weights.\nKEEPS: One additive residual carries the signal to the head; attention, MLP and norms are untouched.\nP_SUCCESS: 0.15\nKILL: Loss averaged over steps 41 to 45 above the same-seed baseline by more than 0.03 nats, or any NaN.\n\nIDEA: Multi-timescale residual streams\nMECHANISM: Keep four streams but make them different by construction: each stream is an exponential moving average over depth of the branch outputs with a fixed decay per stream, one at 1, the others at 0.9, 0.7 and 0.5, and each sublayer and the head read a signed combination initialized to the undecayed stream. Decayed streams have bounded norm and hold a recent-layers view at fixed scale, which gives later blocks a clean signal that the 7.8x-grown main residual buries.\nPREDICTION: Parameters unchanged within a few hundred. Step time at or below the baseline since the mix is a diagonal scale. Memory equal to the baseline. Residual RMS on the decayed streams stays within 2x of a single branch output through all 12 layers, and the loss runs below the baseline from mid-training on.\nTEST: 45 matched steps on one seed, logging per-stream RMS at each block; if the model keeps the read weights pinned on the undecayed stream after 45 steps, the extra streams are dead and the idea is dropped.\nSOURCE: own\nTARGET: residual RMS growth, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The mixing must be doubly stochastic and norm preserving; here it is a contraction with row sums below 1.\nKEEPS: The undecayed stream is exactly the baseline residual, so the model can recover the baseline by leaving the reads at init.\nP_SUCCESS: 0.15\nKILL: Loss averaged over steps 41 to 45 above the same-seed baseline by more than 0.03 nats.\n\nIDEA: Writer-typed streams\nMECHANISM: Attention writes its output into streams 0 and 1 only and the MLP into streams 2 and 3 only, with the mix at identity and signed reads per sublayer initialized uniform. Attention history and MLP history then live in separate streams instead of superposed in one 384-wide residual, so each consumer can choose how much of the other writer's history it reads, which the identical writes of the current design make impossible.\nPREDICTION: Parameters unchanged within a few hundred. Step time below the baseline. Memory equal to the baseline. Attention-stream RMS grows slower than the MLP-stream RMS, and the read weights of the attention sublayer tilt toward the attention streams within the first thousand steps.\nTEST: 45 matched steps on one seed with per-stream RMS logging, and a check that the head still receives both histories.\nSOURCE: own\nTARGET: residual RMS growth, down, and recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every sublayer writes to every stream; here each stream has exactly one kind of writer.\nKEEPS: The head reads the mean of all streams, so the full residual sum reaches the output as before.\nP_SUCCESS: 0.12\nKILL: Loss averaged over steps 41 to 45 above the same-seed baseline by more than 0.03 nats.\n\nIDEA: Token-dependent write router\nMECHANISM: Replace the static write gains with per-token gains from a linear map of the normalized branch output to four logits, so each token decides which streams its branch output enters. Dynamic writes create the stream diversity the static design never builds, which the HC paper showed beats static mixing at expansion four.\nPREDICTION: Parameters rise by about 37K. Step time rises by at most 2 percent. Measured stream divergence, the RMS of differences between streams over the mean stream RMS, rises from about 1 percent to over 20 percent by the end of training. Loss gain is small, under 0.01 nats.\nTEST: 3-step timing, then 45 matched steps on one seed with the divergence statistic logged.\nSOURCE: https://arxiv.org/pdf/2409.19606\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Orthogonal Cayley mixing in place of Sinkhorn\nMECHANISM: Parameterize each 4x4 mix as the Cayley transform of a learned skew-symmetric matrix, six parameters, which is exactly orthogonal, allows negative entries and starts at exact identity. This removes the 20 iterations and their accumulated approximation error and permits subtractive mixing.\nPREDICTION: Parameters fall by about 500. Step time falls by 2 to 4 percent. Loss matches the baseline unless the mix leaves identity, which is measured by its Frobenius distance from identity at the end of training.\nTEST: 3-step timing, then 45 matched steps, then a full run inspected for the distance from identity per block.\nSOURCE: https://arxiv.org/pdf/2609.02672\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Strongly asymmetric write init\nMECHANISM: Raise the diagonal write logits from 0.03 to a larger value a and set the off-diagonal ones to minus a, so attention writes mostly to stream 0 and the MLP mostly to stream 1 from the first step while streams 2 and 3 stay close to the embedding. One constant turns the dead copies into an attention stream, an MLP stream and two embedding skips.\nPREDICTION: No change in parameters, step time or memory. Stream divergence at step 45 rises with a. Loss improves by a few thousandths at best.\nTEST: Sweep a over 1, 2 and 4 with 45 matched steps each on one seed, comparing the step 41 to 45 average.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 19583,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20153,
+  "total_tokens": 43165
+ },
+ "cost_usd": 1.975215,
+ "duration_ms": 297202,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 43165,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "scale",
+  "note": "State across depth: four-stream Sinkhorn residual mixing / outward / research",
+  "node": "depth_stream_mix",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46218,
+ "raw": {
+  "duration_api_ms": 295805,
+  "stop_reason": "end_turn",
+  "session_id": "30379aa2-cce6-44c5-9e4c-ac7f2b52b7a5",
+  "total_cost_usd": 1.38308675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20153,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 19583,
+   "output_tokens_details": {
+    "thinking_tokens": 15531
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20153,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 19583,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20153,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20153
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 19583,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20153,
+    "webSearchRequests": 0,
+    "costUSD": 1.38308675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 15531,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 295914,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 19583,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20153,
+    "total_tokens": 43165
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 19583,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20153,
+    "total_tokens": 43165
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,4080 @@
+{
+ "round": 1,
+ "clusters": [
+  {
+   "cluster_id": "io_embed_head-in-k00",
+   "name": "Per-token logit bias / unigram prior",
+   "members": [
+    "sde6c67c3aa",
+    "sb95145d1b7",
+    "s6f95e7ea09",
+    "sbf9361031b"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 4,
+   "representative": "sde6c67c3aa",
+   "n_angles": 3,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 2.8
+  },
+  {
+   "cluster_id": "io_embed_head-in-k01",
+   "name": "Direction-only tied head (normalized rows, output scale/bias)",
+   "members": [
+    "s1d5a6243e8",
+    "s3d58dfadc3",
+    "s70ff396c68",
+    "s738c2e48ad"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 4,
+   "representative": "s1d5a6243e8",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.33,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "io_embed_head-ou-k02",
+     "node": "io_embed_head",
+     "name": "Direction-only tied head with unigram bias"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.8
+  },
+  {
+   "cluster_id": "io_embed_head-in-k02",
+   "name": "Direction-only on both input and output sides",
+   "members": [
+    "s11a5cd9463",
+    "s20536be749",
+    "s1ac31edfa8"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 3,
+   "representative": "s11a5cd9463",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 12,
+   "leap_share": 0.33,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.683
+  },
+  {
+   "cluster_id": "io_embed_head-in-k03",
+   "name": "Lazy/sparse weight decay for absent rows",
+   "members": [
+    "s931cf77592",
+    "s4176910053"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "s931cf77592",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 13,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.65
+  },
+  {
+   "cluster_id": "io_embed_head-in-k04",
+   "name": "Partial untie / private output parameters",
+   "members": [
+    "safff687645",
+    "s61fe702fbf",
+    "s10e66c23d4",
+    "s1fc45482a3"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 4,
+   "representative": "safff687645",
+   "n_angles": 2,
+   "selected": true,
+   "rank": 4,
+   "leap_share": 0.67,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "io_embed_head-ou-k01",
+     "node": "io_embed_head",
+     "name": "Untie frequent rows with output delta"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.8,
+   "lane": "longshot",
+   "lane_propensity": 0.014
+  },
+  {
+   "cluster_id": "io_embed_head-in-k05",
+   "name": "Remove current-token echo before head",
+   "members": [
+    "s7d59871358",
+    "s9490dc191f",
+    "s024dfab3e9"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 3,
+   "representative": "s7d59871358",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "io_embed_head-ou-k00",
+     "node": "io_embed_head",
+     "name": "Cancel input-token similarity in readout"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.85
+  },
+  {
+   "cluster_id": "io_embed_head-in-k06",
+   "name": "Learned stream read-out weighting",
+   "members": [
+    "se1073877c9",
+    "s25ff21218a"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 2,
+   "representative": "s25ff21218a",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 1.15
+  },
+  {
+   "cluster_id": "io_embed_head-in-k07",
+   "name": "Rescale embedding input to match block write scale",
+   "members": [
+    "s7cfbee62e8",
+    "s0f7c1fbe06",
+    "s4e7c7db5f2",
+    "s86c9b40fa3",
+    "s19aa8ba652",
+    "s53e8dee27e",
+    "sdda6e64526",
+    "s04e31b5178"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 8,
+   "representative": "s7cfbee62e8",
+   "n_angles": 4,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_norm_init-in-k00",
+     "node": "depth_norm_init",
+     "name": "Embedding input scale fix (norm/scalar/multiplier on token embedding)"
+    },
+    {
+     "cluster_id": "depth_stream_mix-in-k07",
+     "node": "depth_stream_mix",
+     "name": "RMSNorm on embedding"
+    },
+    {
+     "cluster_id": "mlp_swiglu-ou-k06",
+     "node": "mlp_swiglu",
+     "name": "Embedding envelope control"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 3.6,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "io_embed_head-in-k08",
+   "name": "Re-inject token row at every block",
+   "members": [
+    "s11fab65fc3"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s11fab65fc3",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 15,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "known",
+   "prior_match": "Value embeddings and embedding skip connections (re-injecting token identity)",
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": -0.05
+  },
+  {
+   "cluster_id": "io_embed_head-in-k09",
+   "name": "Per-token stream-entry weights",
+   "members": [
+    "s22224e178f"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s22224e178f",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 11,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "io_embed_head-in-k10",
+   "name": "Normalize streams before pooling",
+   "members": [
+    "sf1e7170c0a",
+    "s18d2bfe530",
+    "scf322389f0"
+   ],
+   "cards": [
+    "diagnosis",
+    "research"
+   ],
+   "n": 3,
+   "representative": "sf1e7170c0a",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_stream_mix-in-k06",
+     "node": "depth_stream_mix",
+     "name": "Per-stream RMS normalized read"
+    },
+    {
+     "cluster_id": "depth_norm_init-ou-k00",
+     "node": "depth_norm_init",
+     "name": "Per-stream read norm with partitioned gains"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Learned per-stream final-norm weights replacing plain mean at the head.",
+   "score": 1.1
+  },
+  {
+   "cluster_id": "io_embed_head-in-k11",
+   "name": "Per-position log-temperature",
+   "members": [
+    "sad73d52409"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sad73d52409",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "io_embed_head-in-k12",
+   "name": "Input-side gradient amplification",
+   "members": [
+    "s6c4837adba",
+    "sf2a3aa32e0",
+    "s17f666e1ad"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 3,
+   "representative": "s6c4837adba",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 14,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "io_embed_head-ou-k05",
+     "node": "io_embed_head",
+     "name": "Tied-table gradient and scale rebalancing on input side"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Tied embeddings are shaped mostly by the output side, and scaling input gradients reduces this",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.6
+  },
+  {
+   "cluster_id": "io_embed_head-in-k13",
+   "name": "Row-normalized embedding optimizer updates",
+   "members": [
+    "s1e1da9841a"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s1e1da9841a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "io_embed_head-in-k14",
+   "name": "Distance (Gaussian) head",
+   "members": [
+    "sd3fb4745ec"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "sd3fb4745ec",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "io_embed_head-in-k15",
+   "name": "Embedding-to-readout bigram skip",
+   "members": [
+    "s06086e8ac4"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s06086e8ac4",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 10,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "io_embed_head",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k00",
+   "name": "Token-conditional gated latent",
+   "members": [
+    "s457e0ed275",
+    "s991a7c939c",
+    "s368dcc2880",
+    "s75b7d6aa2e"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 4,
+   "representative": "s457e0ed275",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.25,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.8
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k01",
+   "name": "Gated latent plus attention output gate",
+   "members": [
+    "sf8cfc2ca4c",
+    "s35d1102380",
+    "s67c0537719"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 3,
+   "representative": "s35d1102380",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 12,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.767
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k02",
+   "name": "Gated expansion of K/V",
+   "members": [
+    "sd10ade3d00",
+    "sebdec86283"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis"
+   ],
+   "n": 2,
+   "representative": "sd10ade3d00",
+   "n_angles": 2,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.9,
+   "lane": "longshot",
+   "lane_propensity": 0.016
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k03",
+   "name": "Per-head gates over shared latent",
+   "members": [
+    "sc9319d736c"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sc9319d736c",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k04",
+   "name": "Top-k sparse latent",
+   "members": [
+    "s2120347f98",
+    "s212ca28995"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "s212ca28995",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k07",
+   "name": "Rope width sweep",
+   "members": [
+    "s3b8587eaad"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s3b8587eaad",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 10,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k08",
+   "name": "Rotary init scale",
+   "members": [
+    "s71d6cb6f00"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s71d6cb6f00",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k10",
+   "name": "Narrow keys, wide values",
+   "members": [
+    "s05a7731c77",
+    "sf3175cd6cc"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "s05a7731c77",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_latent_kv-ou-k03",
+     "node": "attn_latent_kv",
+     "name": "Narrow key latent, full-rank values"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k11",
+   "name": "Global KV codebook",
+   "members": [
+    "s0b1f60fd9a"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s0b1f60fd9a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k12",
+   "name": "Per-head value withhold gate",
+   "members": [
+    "s415be5a4ed"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s415be5a4ed",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k14",
+   "name": "Per-head low-rank K/V residual",
+   "members": [
+    "sed5950f589",
+    "s65dc27c251"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "sed5950f589",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 13,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_latent_kv-ou-k05",
+     "node": "attn_latent_kv",
+     "name": "Per-head low-rank residual on shared latent"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Low-Rank Key Value Attention (LRKV)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.65
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k15",
+   "name": "Query scored against latent",
+   "members": [
+    "s18eedb7891"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s18eedb7891",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 14,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Rotary dimension per head instead of one shared rotary key.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k16",
+   "name": "Prefix-conditioned keys",
+   "members": [
+    "s21aec0ff10"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s21aec0ff10",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k17",
+   "name": "Uncompressed K/V in layer 0",
+   "members": [
+    "sb8dd66969c"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sb8dd66969c",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 11,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "attn_latent_kv-in-k18",
+   "name": "Successor-value heads",
+   "members": [
+    "s10bec45c74"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s10bec45c74",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k00",
+   "name": "QK-norm / init scale for rotary slices",
+   "members": [
+    "s0f6c1feaa2",
+    "se6e14f1347",
+    "s7faf5a9d8d",
+    "sc155120cb9",
+    "s3823e432c5",
+    "s5c15bc950a",
+    "s32822ad5c4"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 7,
+   "representative": "s0f6c1feaa2",
+   "n_angles": 4,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_latent_kv-in-k09",
+     "node": "attn_latent_kv",
+     "name": "Normalized rope slice"
+    },
+    {
+     "cluster_id": "depth_norm_init-in-k12",
+     "node": "depth_norm_init",
+     "name": "Normalize rotary logits"
+    },
+    {
+     "cluster_id": "attn_rope_norm-ou-k07",
+     "node": "attn_rope_norm",
+     "name": "Separate rotary-path normalisation and gain/temperature"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 3.65,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k01",
+   "name": "Value rotation with derotation (offset-coded values)",
+   "members": [
+    "s14e8dccd43",
+    "sdce62f76f0",
+    "sce278c5f21",
+    "sf2547da1ce",
+    "sbe9e85c46f",
+    "sd480bde265",
+    "seb90bfb8b7",
+    "s8970d9397d",
+    "s8872208160",
+    "seb90537ed1",
+    "s0f57ec4870",
+    "s4fc1b0b612"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 12,
+   "representative": "s14e8dccd43",
+   "n_angles": 3,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.3,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_rope_norm-ou-k02",
+     "node": "attn_rope_norm",
+     "name": "Rotate values by position (offset-aware outputs)"
+    },
+    {
+     "cluster_id": "attn_heads_outpu-in-k05",
+     "node": "attn_heads_outpu",
+     "name": "Value rotary heterodyning"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 2.4
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k02",
+   "name": "Explicit expected-offset scalar channel",
+   "members": [
+    "sd643cb4d15",
+    "se4e4821673"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "se4e4821673",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 11,
+   "leap_share": 0.5,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.817
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k03",
+   "name": "Previous-token info injection (smear/shift/hardwired head)",
+   "members": [
+    "seba836bc5b",
+    "sfebce4350b",
+    "sa6357ca69a",
+    "s2996e9233a",
+    "sa03bf36b41",
+    "sb39f34a405",
+    "sca610bcc95"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis"
+   ],
+   "n": 7,
+   "representative": "seba836bc5b",
+   "n_angles": 3,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 0.33,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_latent_kv-in-k05",
+     "node": "attn_latent_kv",
+     "name": "Previous-token shift in latent"
+    },
+    {
+     "cluster_id": "io_embed_head-in-k16",
+     "node": "io_embed_head",
+     "name": "Previous-token copy in layer-0 attention"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 2.567
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k04",
+   "name": "Fourier relative-position bias / query-steered lag",
+   "members": [
+    "s9372ec69ee",
+    "s233311b8c4"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 2,
+   "representative": "s9372ec69ee",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 10,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k05",
+   "name": "Key-side magnitude/salience restoration",
+   "members": [
+    "s5f4de9d096",
+    "sed9c6ae909"
+   ],
+   "cards": [
+    "diagnosis",
+    "research"
+   ],
+   "n": 2,
+   "representative": "s5f4de9d096",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence",
+    "import"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.9
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k06",
+   "name": "Attention-window/chunk warmup",
+   "members": [
+    "sc7e8d0e25f"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sc7e8d0e25f",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k07",
+   "name": "Exclude self-key in deep layers",
+   "members": [
+    "s9dc3b4a3ac",
+    "s03b519b4c9",
+    "sa2949bfdd8"
+   ],
+   "cards": [
+    "diagnosis",
+    "research"
+   ],
+   "n": 3,
+   "representative": "s9dc3b4a3ac",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_heads_outpu-in-k08",
+     "node": "attn_heads_outpu",
+     "name": "Self-excluded attention mask"
+    },
+    {
+     "cluster_id": "attn_rope_norm-ou-k03",
+     "node": "attn_rope_norm",
+     "name": "Null key / no self-key"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.85
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k08",
+   "name": "Causal key depletion",
+   "members": [
+    "s8cdd20763f"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s8cdd20763f",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k09",
+   "name": "Event-time clock for slow rotary band",
+   "members": [
+    "sbb6477ac20"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sbb6477ac20",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k10",
+   "name": "Post-attention sigmoid head gate",
+   "members": [
+    "s20fc36fd74",
+    "s2da7836045",
+    "s22ef52ba6b",
+    "s0ab97a5c0e",
+    "s3a1b2a6077"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 5,
+   "representative": "s20fc36fd74",
+   "n_angles": 4,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_heads_outpu-in-k12",
+     "node": "attn_heads_outpu",
+     "name": "Per-head output gate"
+    },
+    {
+     "cluster_id": "attn_heads_outpu-ou-k01",
+     "node": "attn_heads_outpu",
+     "name": "Per-head output gating"
+    },
+    {
+     "cluster_id": "attn_rope_norm-ou-k04",
+     "node": "attn_rope_norm",
+     "name": "Post-SDPA sigmoid output gate"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Head-specific sigmoid output gate after SDPA",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 3.5
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k11",
+   "name": "Float32 rotary application",
+   "members": [
+    "s34f2387e58"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s34f2387e58",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_rope_norm-in-k12",
+   "name": "Faster LR for positional projections",
+   "members": [
+    "sd943885864"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sd943885864",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 12,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k00",
+   "name": "Learned sink key",
+   "members": [
+    "sf1944d1c91",
+    "s87a5de12d1",
+    "s369734243c"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 3,
+   "representative": "sf1944d1c91",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_heads_outpu-ou-k05",
+     "node": "attn_heads_outpu",
+     "name": "Learned attention sink key"
+    },
+    {
+     "cluster_id": "attn_latent_kv-in-k13",
+     "node": "attn_latent_kv",
+     "name": "Learned latent sink register"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.85
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k02",
+   "name": "Head count/width geometry",
+   "members": [
+    "s291d507e0f",
+    "s3a7b5fa18c",
+    "s42e96f80d8"
+   ],
+   "cards": [
+    "diagnosis",
+    "research"
+   ],
+   "n": 3,
+   "representative": "s291d507e0f",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_heads_outpu-ou-k06",
+     "node": "attn_heads_outpu",
+     "name": "Three heads of 128"
+    }
+   ],
+   "prior": "failed",
+   "prior_match": "Changing head count at fixed hidden size (PanGu-π Pro)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": -0.4
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k03",
+   "name": "Unary key salience bias",
+   "members": [
+    "scf5d413e2e",
+    "s25f773603c"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "scf5d413e2e",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_latent_kv-ou-k02",
+     "node": "attn_latent_kv",
+     "name": "Price channel per-key salience logit"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k04",
+   "name": "Query-norm gain scheduling",
+   "members": [
+    "sadd597a5c0"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sadd597a5c0",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k06",
+   "name": "Shared softmax across head pairs",
+   "members": [
+    "s73a6a59cf6"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s73a6a59cf6",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k07",
+   "name": "Shared wo with decoupled head width",
+   "members": [
+    "sc8c0324288"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "sc8c0324288",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k09",
+   "name": "Static per-head or global score scale",
+   "members": [
+    "s8e4ef89f6a",
+    "s0bf5af4913"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 2,
+   "representative": "s8e4ef89f6a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k10",
+   "name": "Length-scaled softmax (SSMax)",
+   "members": [
+    "s1eedcccf81"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s1eedcccf81",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k11",
+   "name": "Conv on MLP input",
+   "members": [
+    "sfb757e6226"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sfb757e6226",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "attn_heads_outpu-in-k13",
+   "name": "Replace layer-0 attention with conv mixer",
+   "members": [
+    "s99bc12e1f0"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s99bc12e1f0",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k00",
+   "name": "Learned gate threshold bias",
+   "members": [
+    "s48724fa46a",
+    "sb7566458ce",
+    "s8890a9bf42"
+   ],
+   "cards": [
+    "diagnosis",
+    "research"
+   ],
+   "n": 3,
+   "representative": "s48724fa46a",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence",
+    "rerepresent"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "mlp_swiglu-ou-k13",
+     "node": "mlp_swiglu",
+     "name": "Homeostatic gate offsets"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.85
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k01",
+   "name": "Shared up projection across layers",
+   "members": [
+    "se8faa8adcb"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "se8faa8adcb",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k02",
+   "name": "Previous-token value path",
+   "members": [
+    "s6c4ebba241",
+    "s57726b8ae7"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "s6c4ebba241",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "mlp_swiglu-ou-k16",
+     "node": "mlp_swiglu",
+     "name": "Token-shifted value path"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k03",
+   "name": "Normalized hidden with write scalar",
+   "members": [
+    "s5d17bd1ffb"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s5d17bd1ffb",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "existence"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k04",
+   "name": "Depth-varying FFN width",
+   "members": [
+    "s0aa9623dcf",
+    "s5fbca7c400"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "s0aa9623dcf",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "mlp_swiglu-ou-k15",
+     "node": "mlp_swiglu",
+     "name": "Reverse width allocation"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Layer-wise scaling of FFN width (OpenELM)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.65
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k05",
+   "name": "Uniformly wider FFN",
+   "members": [
+    "s9079230f69"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s9079230f69",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k06",
+   "name": "Squared-ReLU gate",
+   "members": [
+    "sda81b3593a"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sda81b3593a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k07",
+   "name": "Layer-0 gradient anomaly analysis",
+   "members": [
+    "s6b7fe0d71d",
+    "s1164a29b12"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 2,
+   "representative": "s6b7fe0d71d",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 10,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.15
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k08",
+   "name": "Remove input-parallel component of MLP output",
+   "members": [
+    "sa53e2f4894"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "sa53e2f4894",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k09",
+   "name": "Fused gate/up matrix for joint Muon orthogonalisation",
+   "members": [
+    "s1b74fe43ba"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s1b74fe43ba",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Rotary dimension per head instead of one shared rotary key.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "mlp_swiglu-in-k10",
+   "name": "Larger gate init scale",
+   "members": [
+    "sffb7fa3b95"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "sffb7fa3b95",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k00",
+   "name": "Learned final stream read",
+   "members": [
+    "s4a0fc72a03",
+    "s76b0cb73ef",
+    "s807fb4c4e5"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 3,
+   "representative": "s4a0fc72a03",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 0.33,
+   "leap_ops": [
+    "literalize"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Learned per-stream final-norm weights replacing plain mean at the head.",
+   "score": 1.1
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k01",
+   "name": "Symmetry-breaking / distinct write inits",
+   "members": [
+    "s2eac9dcbe6",
+    "s32eadedb69",
+    "sfcab6002c5",
+    "s140953b3d5",
+    "s9ca5ee94d0",
+    "sdc172e5a49"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 6,
+   "representative": "s2eac9dcbe6",
+   "n_angles": 3,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_norm_init-in-k04",
+     "node": "depth_norm_init",
+     "name": "Multi-timescale stream write rates"
+    },
+    {
+     "cluster_id": "depth_norm_init-ou-k01",
+     "node": "depth_norm_init",
+     "name": "Depth-lane stream writes"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Stream collapse analysis and symmetry-breaking initialization",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 2.45,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k02",
+   "name": "Routed/bucketed writes to streams (depth groups, embedding stream)",
+   "members": [
+    "s3ce224f465",
+    "s0942f451de",
+    "sf876630c85",
+    "s8c8bd2c018",
+    "s6e26ae627a"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 5,
+   "representative": "s3ce224f465",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 0.67,
+   "leap_ops": [
+    "literalize"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_stream_mix-ou-k03",
+     "node": "depth_stream_mix",
+     "name": "Static writer-typed stream assignment"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.75
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k03",
+   "name": "Lower mixing init / temperature",
+   "members": [
+    "s5cf48e2bec",
+    "s18fa64bbf5",
+    "s8ef35c08d5"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 3,
+   "representative": "s5cf48e2bec",
+   "n_angles": 3,
+   "selected": false,
+   "rank": 14,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "failed",
+   "prior_match": "Birkhoff-constrained mixing staying at identity",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.517
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k04",
+   "name": "Mass-conserving branch-as-stream residual",
+   "members": [
+    "sf7e0193cde"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sf7e0193cde",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "literalize"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k05",
+   "name": "Decay anchored at init",
+   "members": [
+    "s52abb696a5"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s52abb696a5",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "literalize"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k08",
+   "name": "Signed writes",
+   "members": [
+    "s6d20733947"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s6d20733947",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 16,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.117
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k09",
+   "name": "Causal running-mean stream",
+   "members": [
+    "s093ed44ef3"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s093ed44ef3",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 15,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k10",
+   "name": "RMS-proportional write gain",
+   "members": [
+    "s7ba4696f18"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s7ba4696f18",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k11",
+   "name": "Leapfrog split attention/MLP halves",
+   "members": [
+    "s5802a073df"
+   ],
+   "cards": [
+    "diagnosis"
+   ],
+   "n": 1,
+   "representative": "s5802a073df",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 17,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rerepresent"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.117
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k12",
+   "name": "Mean-preserving orthogonal mix",
+   "members": [
+    "s2391ae38a8",
+    "s0dc366cf81"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 2,
+   "representative": "s2391ae38a8",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_stream_mix-ou-k05",
+     "node": "depth_stream_mix",
+     "name": "Cayley orthogonal mixing"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.9
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k13",
+   "name": "Sparse mixing stages",
+   "members": [
+    "sac31aaa55d"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sac31aaa55d",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k14",
+   "name": "Dynamic token-dependent read",
+   "members": [
+    "sca41315b3a",
+    "s1344557338",
+    "se11950c12b",
+    "sd74b9da107"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 4,
+   "representative": "sca41315b3a",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_latent_kv-in-k06",
+     "node": "attn_latent_kv",
+     "name": "Token-dependent stream read"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Hyper-Connections (static vs dynamic)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.3
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k15",
+   "name": "Signed linear reads",
+   "members": [
+    "s998a036f1c",
+    "s39ac7bb6ba"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 2,
+   "representative": "s998a036f1c",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_stream_mix-ou-k01",
+     "node": "depth_stream_mix",
+     "name": "Depth-lag signed reads over single residual"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.733
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k16",
+   "name": "Move stream logits to AdamW",
+   "members": [
+    "s400fda03d2",
+    "s8c9a58e746",
+    "sa69b5ebd6f"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 3,
+   "representative": "s8c9a58e746",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 11,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.85
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k17",
+   "name": "Freeze/limit gate learning",
+   "members": [
+    "s7bff612812",
+    "sd54a76871e"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "sd54a76871e",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 13,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.733
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k18",
+   "name": "Lookahead on stream logits",
+   "members": [
+    "s4af21a9761"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s4af21a9761",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 12,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "depth_stream_mix-in-k19",
+   "name": "Hard one-hot reads",
+   "members": [
+    "s5ef3960e4b"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s5ef3960e4b",
+   "n_angles": 1,
+   "selected": true,
+   "rank": 10,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867,
+   "lane": "longshot",
+   "lane_propensity": 0.006
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k01",
+   "name": "QK-norm gain init above 1",
+   "members": [
+    "s947cf0f791"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s947cf0f791",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k02",
+   "name": "Zero final-norm gain init",
+   "members": [
+    "scb6b27cfa6"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "scb6b27cfa6",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "known",
+   "prior_match": "Muon-era speedrun init (zero-initialized projections)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.617
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k03",
+   "name": "Smaller init for Muon matrices",
+   "members": [
+    "sb69220affc"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sb69220affc",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 6,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k05",
+   "name": "No-affine norms with learned scalar temperatures",
+   "members": [
+    "s2da3e1c4b5",
+    "se66618a9fe",
+    "s336299d18a",
+    "scba1ac54bf"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 4,
+   "representative": "s2da3e1c4b5",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.75,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.8
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k07",
+   "name": "Grouped RMS statistic",
+   "members": [
+    "s04eaf2e68f"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s04eaf2e68f",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k08",
+   "name": "Zero-parameter norms with fixed constant temperatures",
+   "members": [
+    "sa8fe9720aa"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sa8fe9720aa",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k09",
+   "name": "Scalar temperature reparameterization for optimizer dynamics (log/nGPT scale)",
+   "members": [
+    "sf5b6a37334",
+    "s506ad35bf5"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "s506ad35bf5",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.733
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k10",
+   "name": "Collapse gains to mean at cooldown",
+   "members": [
+    "s1964c2ddb5",
+    "s41dfb288b7"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "s1964c2ddb5",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 0.5,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.65
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k11",
+   "name": "Identity-anchored (1+w) gain parameterization",
+   "members": [
+    "sfa8fafb470",
+    "s14de5b5cd5"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "sfa8fafb470",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "depth_norm_init-in-k13",
+   "name": "Per-head attention temperatures",
+   "members": [
+    "sf2f3f8a5c7",
+    "sfc427a410d",
+    "s15cb6324c5",
+    "s98742624a8",
+    "s977f6a937d",
+    "sb951f6724d"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 6,
+   "representative": "sf2f3f8a5c7",
+   "n_angles": 3,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_rope_norm-ou-k06",
+     "node": "attn_rope_norm",
+     "name": "Per-head attention temperature, decay-proof log-parametrisation"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 2.45
+  },
+  {
+   "cluster_id": "depth_layer_stac-in-k00",
+   "name": "Stream-init/permutation structuring of multi-stream residual",
+   "members": [
+    "sb77959ccc2",
+    "s408a33cf5e"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "sb77959ccc2",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "depth_layer_stac-in-k01",
+   "name": "Looped middle blocks with pass-specific stream logits",
+   "members": [
+    "sebdbd7c9e1",
+    "sd09afc19ef"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "sebdbd7c9e1",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "inward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_layer_stac-ou-k01",
+     "node": "depth_layer_stac",
+     "name": "Looped/recurrent block reuse"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Relaxed Recursive Transformers (shared layers plus layer-wise LoRA)",
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": -0.1
+  },
+  {
+   "cluster_id": "depth_layer_stac-in-k02",
+   "name": "Progressive stacking (growth schedule)",
+   "members": [
+    "s091040dffb"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s091040dffb",
+   "n_angles": 1,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_layer_stac",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "depth_layer_stac-in-k03",
+   "name": "Parallel tail with separate stream writes",
+   "members": [
+    "s5a05cc1d3b"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s5a05cc1d3b",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "depth_layer_stac-in-k04",
+   "name": "Per-token write gates",
+   "members": [
+    "s4801b35fe3"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s4801b35fe3",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "inward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_layer_stac-in-k05",
+   "name": "Shallower, wider-FFN architecture (10 blocks)",
+   "members": [
+    "s941f0a2098"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s941f0a2098",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_layer_stac",
+   "direction": "inward",
+   "prior": "known",
+   "prior_match": "Depth–width scaling for small models (Nemotron-Flash)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "io_embed_head-ou-k03",
+   "name": "Residual magnitude as confidence temperature",
+   "members": [
+    "sfaf56e6cae",
+    "s5e31541086",
+    "s4fffd5bd9d",
+    "sf46adba8d2"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 4,
+   "representative": "sfaf56e6cae",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "literalize"
+   ],
+   "node": "io_embed_head",
+   "direction": "outward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_norm_init-ou-k02",
+     "node": "depth_norm_init",
+     "name": "Magnitude-aware norm (prefix RMS / head temperature from RMS)"
+    },
+    {
+     "cluster_id": "depth_norm_init-in-k06",
+     "node": "depth_norm_init",
+     "name": "Magnitude-aware head temperature"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.8
+  },
+  {
+   "cluster_id": "io_embed_head-ou-k04",
+   "name": "History-carrying streams",
+   "members": [
+    "s2e00245b7a"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s2e00245b7a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "literalize"
+   ],
+   "node": "io_embed_head",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "attn_latent_kv-ou-k00",
+   "name": "Self-excluding shifted KV with learned sink",
+   "members": [
+    "s47f65de6fd"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s47f65de6fd",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-ou-k01",
+   "name": "Causal AGC on latent",
+   "members": [
+    "s301018bd14"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s301018bd14",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "attn_latent_kv",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-ou-k04",
+   "name": "Companding eps on latent norm",
+   "members": [
+    "s17f80761db"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s17f80761db",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_latent_kv-ou-k06",
+   "name": "Short causal conv on latent",
+   "members": [
+    "s2fac183287",
+    "s74de4f18fc",
+    "sc12466a2ad",
+    "s30726e7798",
+    "s4174743845",
+    "sce521b3b1a"
+   ],
+   "cards": [
+    "deepen",
+    "diagnosis",
+    "research"
+   ],
+   "n": 6,
+   "representative": "s2fac183287",
+   "n_angles": 3,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_latent_kv",
+   "direction": "outward",
+   "merged_from": [
+    {
+     "cluster_id": "attn_heads_outpu-in-k01",
+     "node": "attn_heads_outpu",
+     "name": "Causal lag/tap mixing on keys and values or latent"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 2.7
+  },
+  {
+   "cluster_id": "attn_rope_norm-ou-k00",
+   "name": "Rotary frequency spectrum retuning (theta 480)",
+   "members": [
+    "sf89e2085ed"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sf89e2085ed",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "remeasure"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "outward",
+   "prior": "known",
+   "prior_match": "LeRoPE: learnable per-frequency RoPE",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "attn_rope_norm-ou-k01",
+   "name": "Move RoPE onto content dims / remove decoupled key",
+   "members": [
+    "s426e95758a"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s426e95758a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "remeasure"
+   ],
+   "node": "attn_rope_norm",
+   "direction": "outward",
+   "prior": "known",
+   "prior_match": "Partial RoPE (rotate only a fraction of dims)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "attn_rope_norm-ou-k05",
+   "name": "Per-head rotary keys (widen shared key)",
+   "members": [
+    "s403cc5e2b9"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s403cc5e2b9",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Rotary dimension per head instead of one shared rotary key.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "attn_rope_norm-ou-k08",
+   "name": "Final norm / logit temperature log-gain",
+   "members": [
+    "sa7a853416d"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sa7a853416d",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "attn_rope_norm",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "attn_heads_outpu-ou-k00",
+   "name": "Shifted-key induction heads",
+   "members": [
+    "s9672073260",
+    "s8302812320",
+    "s40dab6db58",
+    "sc21d6f35ef"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 4,
+   "representative": "s9672073260",
+   "n_angles": 2,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.75,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.8,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "attn_heads_outpu-ou-k02",
+   "name": "Latent-value heads with per-head rank-128 output",
+   "members": [
+    "se7dbbff80d"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "se7dbbff80d",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-ou-k03",
+   "name": "Re-query second hop with shared K/V",
+   "members": [
+    "sccd3b774dd"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sccd3b774dd",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-ou-k04",
+   "name": "Two-depth keys (previous layer K/V)",
+   "members": [
+    "se8e7ae41f1"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "se8e7ae41f1",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "rulebreak"
+   ],
+   "node": "attn_heads_outpu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "attn_heads_outpu-ou-k07",
+   "name": "Predecessor-gated MLP",
+   "members": [
+    "s545c7c8c3a"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s545c7c8c3a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867
+  },
+  {
+   "cluster_id": "attn_heads_outpu-ou-k08",
+   "name": "Shifted-key pointer logits copy mechanism",
+   "members": [
+    "sf23c585ac6"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sf23c585ac6",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "attn_heads_outpu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k00",
+   "name": "Slow EMA AGC on MLP write",
+   "members": [
+    "s648165d2fc",
+    "scd0c7327b7"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 2,
+   "representative": "s648165d2fc",
+   "n_angles": 2,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.5,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.9,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k01",
+   "name": "Relative (stream-ratio) AGC",
+   "members": [
+    "s92664facb8",
+    "sc451c4f7ee"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "sc451c4f7ee",
+   "n_angles": 1,
+   "selected": true,
+   "rank": 6,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.733,
+   "lane": "longshot",
+   "lane_propensity": 0.005
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k02",
+   "name": "Warmup-only AGC then freeze/fold",
+   "members": [
+    "s5b0cbe54a5",
+    "s2f1e61759d",
+    "sd9b30a8d6b"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 3,
+   "representative": "s5b0cbe54a5",
+   "n_angles": 1,
+   "selected": true,
+   "rank": 12,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.6,
+   "lane": "longshot",
+   "lane_propensity": 0.004
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k03",
+   "name": "AGC on attention write",
+   "members": [
+    "s912b21b5a6",
+    "s13296a9883"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 2,
+   "representative": "s912b21b5a6",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 10,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.65
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k04",
+   "name": "Fixed-norm matrix projection with scalar magnitude",
+   "members": [
+    "s18916319a9",
+    "sbda52275bc",
+    "s053864ee3c"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 3,
+   "representative": "sbda52275bc",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 9,
+   "leap_share": 0.33,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.683
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k05",
+   "name": "Per-channel envelope compressor",
+   "members": [
+    "s58d8a01d0d"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s58d8a01d0d",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k07",
+   "name": "Spectral-compensated gain",
+   "members": [
+    "sc38f8d27e0"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sc38f8d27e0",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k08",
+   "name": "Degree-matched SwiGLU",
+   "members": [
+    "s197be56886"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s197be56886",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 7,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k09",
+   "name": "Uncapped exponential write weights",
+   "members": [
+    "s83fecfeedc"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s83fecfeedc",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 8,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k10",
+   "name": "Write-clip (MuonClip on residual writes)",
+   "members": [
+    "sf5edbe5fb8"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "sf5edbe5fb8",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 1.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k11",
+   "name": "Peri-LN output norm",
+   "members": [
+    "sdc92fb81ac",
+    "sfcd64df072"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "sdc92fb81ac",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 11,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_norm_init-ou-k03",
+     "node": "depth_norm_init",
+     "name": "Branch output norm (Peri-LN)"
+    }
+   ],
+   "prior": "known",
+   "prior_match": "Peri-LN (normalization on sublayer outputs)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.65
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k12",
+   "name": "Divisive normalization pools",
+   "members": [
+    "s4ae37d2a67"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s4ae37d2a67",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "mlp_swiglu-ou-k14",
+   "name": "Mixed activation populations",
+   "members": [
+    "sb2ca7b905f"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sb2ca7b905f",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "import"
+   ],
+   "node": "mlp_swiglu",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_stream_mix-ou-k00",
+   "name": "Collapse to single stream plus extra depth",
+   "members": [
+    "se4235d62d0",
+    "s11531fb147"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 2,
+   "representative": "se4235d62d0",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "outward",
+   "merged_from": [
+    {
+     "cluster_id": "depth_layer_stac-ou-k03",
+     "node": "depth_layer_stac",
+     "name": "Add extra block (more depth)"
+    }
+   ],
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.9
+  },
+  {
+   "cluster_id": "depth_stream_mix-ou-k02",
+   "name": "Multi-timescale decayed streams",
+   "members": [
+    "s3721a39b8a"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s3721a39b8a",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "subtract"
+   ],
+   "node": "depth_stream_mix",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "depth_stream_mix-ou-k04",
+   "name": "Token-dependent write router",
+   "members": [
+    "se5204f594c"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "se5204f594c",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_stream_mix",
+   "direction": "outward",
+   "prior": "known",
+   "prior_match": "Hyper-Connections (static vs dynamic)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.7
+  },
+  {
+   "cluster_id": "depth_norm_init-ou-k04",
+   "name": "Unit-scale embedding with small final gain",
+   "members": [
+    "se35350d305"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "se35350d305",
+   "n_angles": 1,
+   "selected": true,
+   "rank": 0,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.867,
+   "lane": "main"
+  },
+  {
+   "cluster_id": "depth_norm_init-ou-k05",
+   "name": "Depth-indexed gain init",
+   "members": [
+    "s096f88a0c7"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s096f88a0c7",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_norm_init",
+   "direction": "outward",
+   "prior": "known",
+   "prior_match": "LayerNorm Scaling (LNS)",
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.617
+  },
+  {
+   "cluster_id": "depth_layer_stac-ou-k00",
+   "name": "Stream-structure changes in multi-stream residual",
+   "members": [
+    "s420ea8d243"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s420ea8d243",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 4,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "limit"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": 0.2
+  },
+  {
+   "cluster_id": "depth_layer_stac-ou-k02",
+   "name": "Share MLPs to add more blocks",
+   "members": [
+    "s87efc21338"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s87efc21338",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 1,
+   "leap_share": 1.0,
+   "leap_ops": [
+    "limit"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_layer_stac-ou-k04",
+   "name": "Dense depth read over earlier block means",
+   "members": [
+    "s7ed1a5d993"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "s7ed1a5d993",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 5,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_layer_stac",
+   "direction": "outward",
+   "prior": "known",
+   "prior_match": "DenseFormer (depth-weighted averaging)",
+   "prior_source": "model",
+   "obvious": true,
+   "obvious_match": "Per-head learned read weights over the four streams for attention/MLP inputs.",
+   "score": -0.05
+  },
+  {
+   "cluster_id": "depth_layer_stac-ou-k05",
+   "name": "Depth-decayed write scale init",
+   "members": [
+    "sd984753664"
+   ],
+   "cards": [
+    "research"
+   ],
+   "n": 1,
+   "representative": "sd984753664",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 2,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_layer_stac",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.95
+  },
+  {
+   "cluster_id": "depth_layer_stac-ou-k06",
+   "name": "Reallocate attention stages across depth (more early, fewer late)",
+   "members": [
+    "s590026ffb6",
+    "s329c40ad95",
+    "sfe1079881a",
+    "sbee2f4a7cf",
+    "s6f953dd1aa"
+   ],
+   "cards": [
+    "deepen",
+    "research"
+   ],
+   "n": 5,
+   "representative": "s590026ffb6",
+   "n_angles": 2,
+   "selected": false,
+   "rank": 0,
+   "leap_share": 0.6,
+   "leap_ops": [
+    "limit"
+   ],
+   "node": "depth_layer_stac",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 1.75
+  },
+  {
+   "cluster_id": "depth_layer_stac-ou-k07",
+   "name": "Depth-tapered MLA latent size",
+   "members": [
+    "s1026759133"
+   ],
+   "cards": [
+    "deepen"
+   ],
+   "n": 1,
+   "representative": "s1026759133",
+   "n_angles": 1,
+   "selected": false,
+   "rank": 3,
+   "leap_share": 0.0,
+   "leap_ops": [],
+   "node": "depth_layer_stac",
+   "direction": "outward",
+   "prior": "new",
+   "prior_match": null,
+   "prior_source": "model",
+   "obvious": false,
+   "obvious_match": null,
+   "score": 0.783
+  }
+ ],
+ "n_sketches": 275
+}

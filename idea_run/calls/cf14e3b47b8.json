@@ -1,0 +1,105 @@
+{
+ "call_id": "cf14e3b47b8",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"id\":\"depth_stream_mix-in-k00\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k01\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k02\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k03\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k04\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k05\",\"tag\":\"known\",\"match\":\"K6\"},\n{\"id\":\"depth_stream_mix-in-k06\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k08\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k09\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k10\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-in-k11\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-ou-k00\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-ou-k01\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-ou-k02\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"depth_stream_mix-ou-k04\",\"tag\":\"known\",\"match\":\"K1\"},\n{\"id\":\"depth_stream_mix-ou-k05\",\"tag\":\"new\",\"match\":\"\"}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 496,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 3775,
+  "total_tokens": 5841
+ },
+ "cost_usd": 0.022073,
+ "duration_ms": 6528,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 5841,
+ "over_cap": false,
+ "meta": {
+  "card": "prior",
+  "note": "prior-art tags for depth_stream_mix: 16 new clusters"
+ },
+ "prompt_chars": 8670,
+ "raw": {
+  "duration_api_ms": 4828,
+  "stop_reason": "end_turn",
+  "session_id": "aeaeca2d-b9a6-4dd7-83a5-10e48003d374",
+  "total_cost_usd": 0.0202208,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 3775,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 496,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 3775,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 496,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 3775,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 3775
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 496,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 3775,
+    "webSearchRequests": 0,
+    "costUSD": 0.0202208,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 4887,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 496,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3775,
+    "total_tokens": 5841
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 496,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3775,
+    "total_tokens": 5841
+   },
+   "source": "usage"
+  }
+ }
+}

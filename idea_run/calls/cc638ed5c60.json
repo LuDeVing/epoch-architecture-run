@@ -1,0 +1,110 @@
+{
+ "call_id": "cc638ed5c60",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "QUESTIONS, aimed at the weakest links first. Each question decides between two build choices.\n\nQ1: Does a 45-step smoke run reproduce the full run's learning-rate schedule at steps 30–45? | decides: `--smoke-steps 45` vs `--smoke-seconds` cutoff with the 1525-step schedule left in place\nA1: No. With `--smoke-steps 45`, `lr_mult` gets warm = max(1, int(0.9)) = 1 and cool_start = int(31.5) = 31. So indices 31–44 decay linearly from 1.0 to 1/14, and the KILL window would be mostly annealed loss. In the full run, warm = 30 and cool_start = 1067, so steps 30–45 are the first full-LR steps. `--smoke-seconds` keeps total_steps = 1525 and only breaks on time, so its `loss_curve[:45]` matches the full run step for step. Use it, with a time budget that covers at least 45 steps, and read `loss_curve[29:45]`.\n\nQ2: Do arms with the same seed see identical batches? | decides: paired same-seed differencing vs pooled unpaired Welch for the KILL rule\nA2: Yes, provided the build keeps them identical. `Shards` draws from its own `np.random.default_rng(seed)`, which only `sample()` consumes, so batch k is the same in every arm with the same seed. Torch init is also identical as long as s and b are created with `torch.zeros`/`torch.full` (no RNG calls). The counted prior must be computed from a fixed slice, for example the first N tokens of `train_000`, never through `train.rng`. Under these conditions, batch-content noise cancels in the per-seed arm difference.\n\nQ3: Is a same-seed rerun bitwise reproducible, so that the paired noise floor is zero? | decides: measure the floor with A/A same-seed reruns vs force `torch.use_deterministic_algorithms(True)` for the probe runs\nA3: Unknown. The tied table receives an embedding-backward gradient and an SDPA backward gradient, and PyTorch lists several CUDA backward ops as nondeterministic (https://pytorch.org/docs/stable/notes/randomness.html). Under bf16 and Muon at full LR, any bit difference will grow. Two same-seed baseline reruns give the paired floor directly: the sd of their `mean(loss_curve[29:45])` difference.\n\nQ4: What is the across-seed sd of the 15-step mean training loss? | decides: an unpaired 3+3 Welch kill vs a paired or longer-window kill\nA4: Unknown here. It can be computed at no cost from the three existing baseline seeds' `loss_curve` (the layer-0 gradient measurement already used 3 seeds). My belief: 32 windows per step with a window-level loss sd of about 0.4–0.5 nats gives about 0.07–0.09 per step. Seed-dependent data then makes the 15-step mean sd about 0.015–0.025 nats, plus init variance.\n\nQ5: What sd would let 3 seeds resolve a 0.005 margin? | decides: 3 seeds vs 5–8 seeds (or a paired design)\nA5: Unpaired Welch with 3+3 and equal variance has df ≈ 4 and t₀.₉₉ = 3.747. SE = 0.816·s, so it needs s < 0.0016 nats, which is about 10× below my belief in A4. That is not resolvable. Paired with n = 3 (df 2, t₀.₉₉ = 6.965) needs sd_d < 0.00124. With n = 5 (t = 3.747) it needs sd_d < 0.0030; with n = 8 (t = 2.998), sd_d < 0.0047. Three seeds resolve 0.005 only if the A/A floor from A3 is about 0.001 or less.\n\nQ6: Is the logged loss precise enough to see 0.005? | decides: use `loss.item()` as is vs log an explicit fp32 loss\nA6: Probably yes. `log_softmax`/`nll_loss` are on autocast's float32 list (https://pytorch.org/docs/stable/amp.html), so the loss should be fp32, and `loss_curve` rounds to 1e-4. If it were bf16, the grid spacing in the 4–8 range would be 0.031. Print `loss.dtype` once to confirm.\n\nQ7: Is steps 30–45 the right phase for the bias-only vs direction-only margin? | decides: KILL window 30–45 vs a later window (e.g. 200–300 at full LR)\nA7: Probably not for L4. The baseline is already at 7.06 by step 26, which I believe is below the GPT-2-token unigram entropy of about 7.5 nats (unchecked). The unigram prior is therefore largely learned by step 30, and any bias advantage there is a transient. The representation effect that L4 claims would show later, and the A/A noise floor also grows with step count. Both windows need the A3 measurement.\n\nQ8: Does the bias gradient change grad clipping, confounding the comparison against the baseline? | decides: clip over all params vs exclude s and b from `clip_grad_norm_`\nA8: Possibly. `clip_grad_norm_` covers every parameter, and b's gradient (mean softmax minus empirical frequency) has norm up to √2. Whenever the baseline's total norm is near 1, adding b scales down every other update. This is shared by bias-only and direction-only, but it confounds the comparison with the baseline. Log the value `clip_grad_norm_` returns in all arms.\n\nQ9: Should the readout be the training-loss window or a fixed probe set? | decides: `loss_curve[29:45]` mean vs a fixed probe of train windows evaluated after step 45\nA9: A fixed probe gives a paired, step-free readout plus per-band rare-token losses for L4 at no extra cost. Example: 64 windows from the tail of the last `train_*.bin`; the sampler's overlap with them is negligible, and val is never touched (C6). However, smoke runs save no `model.pt`, so the probe has to live in the script (train-only) or a separate tool needs a weights dump. Unknown which the harness tolerates.\n\nQ10: Must the bias-only arm share the direction-only arm's bias init? | decides: zero-init bias-only vs counted-init bias-only as the comparison arm\nA10: Yes. L1 predicts that counted vs zero init alone moves step-26 loss by 0.03–0.3. That is 6–60× the 0.005 margin, so mismatched inits make the KILL test measure init instead of normalization. Use counted init in both arms, or zero in both.\n\nKNOWN:\n- `--smoke-steps 45` gives warm = 1 and cool_start = 31; the full run gives warm = 30 and cool_start = 1067 out of 1525 steps. Steps 30–45 have different LR in the two modes. [script]\n- `--smoke-seconds` keeps the 1525-step schedule, so `loss_curve[:45]` is schedule-identical to the full run. [script]\n- `loss_curve[i]` is the pre-update loss of step i+1, averaged over 8 micro-batches × 4 × 1024 = 32,768 tokens. [script]\n- `Shards` uses its own numpy rng seeded by `--seed`, independent of torch, so same seed means the same batches in every arm. [script]\n- s and b must be initialised without torch RNG calls, and the counted prior must come from a fixed shard slice, not `train.rng`, or pairing breaks. [belief]\n- Unpaired Welch with 3+3 seeds resolves 0.005 only if the per-arm sd is below 0.0016; paired with 3 seeds needs sd_d below 0.00124; paired with 5 needs below 0.0030. (t₀.₉₉: df2 = 6.965, df4 = 3.747, df7 = 2.998.) [belief]\n- The same arithmetic applies to C7's exam test. With an exam sd of 0.004, 3+3 needs a true gain of about 0.017 nats, not 0.005. [belief]\n- Losses go through `log_softmax`, which is on autocast's float32 list, so the logged loss is fp32 (https://pytorch.org/docs/stable/amp.html). [web]\n- PyTorch documents several CUDA backward ops as nondeterministic, so same-seed reruns may diverge (https://pytorch.org/docs/stable/notes/randomness.html). [web]\n- `clip_grad_norm_` (clip at 1.0) covers all parameters, including any new bias. [script]\n- Scale-invariant weights trained with decay grow their norm through tangential steps until decay balances it (https://arxiv.org/abs/2006.08419). AdamW's per-coordinate normalisation also leaves a radial component, so L3's \"norm set only by input and decay\" is incomplete. [web]\n- Three baseline seeds already exist with loss curves (from the layer-0 gradient measurement). Computing their across-seed sd of `mean(loss_curve[29:45])` is free. [measured]\n\nASSUMES:\n- Training loss at early matched steps predicts the exam's final val loss.\n- One seed controls data order and init together; nothing separates data noise from init noise.\n- Training is deterministic enough that same-seed arms differ only by the mechanism.\n- The KILL margin is a point estimate, not a significance test.\n- The LR schedule seen in the probe run equals the full run's.\n- The output prior belongs in the head, not in the residual stream or the input.\n- All vocabulary rows share one table and one AdamW group with weight decay 0.1.\n\nNEW IDEAS:\n\nSLOT: drop\nIDEA: Partial untie, 16 output-only dimensions\nMECHANISM: Drop \"all rows share one table\". The head uses `cat(E[:, :368], U)` with U of size 50304×16 as an output-only parameter, while the input still reads all 384 dimensions of E. This gives a small private channel to the output side for frequency and anisotropy.\nPREDICTION: Non-embedding parameters reach about 22.05M; loss beats bias-only at steps 200–300 as the output prior moves into U.\nTEST: 300 schedule-matched steps (`--smoke-seconds`) on 3 paired seeds against bias-only.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: leap\nBREAKS: Full tying of every dimension.\nKILL: Paired mean of `loss_curve[199:300]` not below bias-only by at least 0.01 on all 3 seeds.\n\nSLOT: strengthen\nIDEA: Direction-only on both sides\nMECHANISM: Also RMS-normalise the input lookup and multiply it by a separate per-token input scale. Row norm then carries no meaning anywhere, and the two roles get two independent scalar vectors.\nPREDICTION: Spearman correlation between row norm and log frequency drops below 0.2 by step 100; layer-0 attention gradient falls toward layer-1 levels.\nTEST: 100 paired steps; log the layer-0 grad norm and the norm/frequency Spearman correlation.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nSLOT: specialise\nIDEA: Training-wheel counted prior, faded out by step 300\nMECHANISM: A frozen counted log-unigram buffer is added to the logits with weight λ(t), going from 1 to 0 linearly over steps 0–300. The prior is used only in the phase where it helps, and the final model's forward is plain.\nPREDICTION: A 1–3 nat gain at steps 1–10, and no loss jump as λ reaches 0 if the rows have absorbed the prior.\nTEST: Compare paired `loss_curve` slopes around step 300 against baseline.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: leap\nBREAKS: The logit function is fixed throughout training.\nKILL: Loss at steps 300–350 more than 0.01 above paired baseline.\n\nSLOT: port\nIDEA: Per-token stream-entry weights\nMECHANISM: Replace `expand(-1, -1, 4, -1)` with per-token 4-vector weights (50304×4, initialised to 1) so token identity chooses which Sinkhorn streams it enters, moving per-token salience out of row norm.\nPREDICTION: Mid-frequency band (rank 100–10k) loss falls by at least 0.01 at step 300.\nTEST: 300 paired steps with a band-wise probe.\nSOURCE: own\nPART: Residual streams: Sinkhorn mixing and read/write weights\nKIND: port\n\nSLOT: combine\nIDEA: Direction-only head with lazy row decay\nMECHANISM: Combine the direction-only head with LazyAdam-style sparse decay (https://www.tensorflow.org/addons/api_docs/python/tfa/optimizers/LazyAdam): decay is applied only to rows looked up in the current batch, so rare rows stop shrinking on every step while their output direction stays intact.\nPREDICTION: Rank-10k+ band loss falls by at least 0.02 compared with direction-only.\nTEST: 300 paired steps, band-wise probe.\nSOURCE: https://www.tensorflow.org/addons/api_docs/python/tfa/optimizers/LazyAdam\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nOPEN:\n- What is the paired A/A floor: the sd of the `mean(loss_curve[29:45])` difference between two same-seed baseline reruns? | build: yes | decides: 3 paired seeds vs 5–8 paired seeds\n- What is the across-seed sd of the 15-step mean in the existing 3 baseline curves? | build: yes | decides: Welch kill vs paired kill\n- Does the A/A floor grow by step 300 enough to make a later window worse than 30–45? | build: yes | decides: KILL window 30–45 vs 200–300\n- Is the baseline's pre-clip grad norm above 1 in early steps, so that the bias gradient changes clipping? | build: yes | decides: include s and b in clipping vs exclude them\n- Will the harness accept an in-script train-slice probe? | build: yes | decides: in-script probe vs `loss_curve` only\n- What is the across-seed sd of the exam val loss at 1525 steps? | build: no | decides: (sets how many seeds the C7 claim needs)\n\nLINK STATUS:\n- L1: open | No counted-init run exists yet. If measured, it is resolvable even with 3 seeds, since the predicted gap of 0.03–0.3 is far above the noise.\n- L2: open | Anisotropy is unmeasured in both arms.\n- L3: open | The output gradient's radial component is exactly zero under row normalisation, but AdamW updates and tangential growth still change norms (https://arxiv.org/abs/2006.08419), so the predicted Spearman drop is not guaranteed.\n- L4: open | The −0.005 threshold over 3 seeds is resolvable only if the paired sd_d is below 0.00124; unpaired it needs s below 0.0016, about 10× below my belief. The bias-only arm must also share the counted init (A10).\n- L5: open | At an exam sd of about 0.004, a 0.005 exam gain is not provable with 3+3 seeds; a gain of about 0.017 or more is needed.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 17363,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 13580,
+  "total_tokens": 32513
+ },
+ "cost_usd": 1.559232,
+ "duration_ms": 181821,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 32513,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "io_embed_head-in-k01",
+  "seed": "",
+  "note": "interrogating 'Per-token scale and bias decoupling norm from direction' gen 0 depth 1: What is the matched-seed noise of a 15-step mean loss across",
+  "node": "io_embed_head",
+  "depth": 1,
+  "gen": 0
+ },
+ "prompt_chars": 31581,
+ "raw": {
+  "duration_api_ms": 180446,
+  "stop_reason": "end_turn",
+  "session_id": "7f519343-f674-43e0-ad74-b0bd473522bb",
+  "total_cost_usd": 0.45622160000000006,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13580,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 17363,
+   "output_tokens_details": {
+    "thinking_tokens": 12085
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13580,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 17363,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 13580,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13580
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 17363,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 13580,
+    "webSearchRequests": 0,
+    "costUSD": 0.45622160000000006,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 12085,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 180548,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 17363,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13580,
+    "total_tokens": 32513
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 17363,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13580,
+    "total_tokens": 32513
+   },
+   "source": "usage"
+  }
+ }
+}

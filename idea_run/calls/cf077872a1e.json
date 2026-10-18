@@ -1,0 +1,110 @@
+{
+ "call_id": "cf077872a1e",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "PASS 1 (scratch):\n\nTwelve seeds, one rule each:\n1. Key and value of a head come from different tokens: match on token j−1, read token j (one-hop induction).\n2. Heads aggregate the 128-d latent itself; each head owns a full 384×128 output map, no 64-d value bottleneck.\n3. A layer retrieves twice: the attention output re-queries the same K/V before wo.\n4. Keys of layer l−1 stay visible to layer l's queries (one softmax over 2T keys across two depths).\n5. Softmax need not sum to 1 over real tokens: a learned per-head sink key with zero value.\n6. Half the heads see only a 64-token window, the other half see everything, inside the same layer.\n7. The diagonal is removed: a token never attends to itself, since the residual already carries it.\n8. Half the heads use sigmoid attention with a learned bias instead of softmax.\n9. Head count changes with depth: 3×128 in the first six layers, 12×32 in the last six.\n10. wo is shared across all 12 layers and the freed 1.6M parameters buy a seventh head everywhere.\n11. Values are first differences v_j − v_{j−1}, so attention reads changes rather than states.\n12. Per-head output gate plus per-head RMSNorm on the SDPA output (post-norm per head).\n\nRulebreak operator, eight rules of this part ranked by how much depends on them:\nR1. Attention weights are one softmax over same-or-earlier positions and sum to 1 (everything downstream assumes a convex mixture).\nR2. The key a query scores and the value it then reads belong to the same token.\nR3. A layer retrieves once: one hop, then the result enters the stream.\nR4. A layer's keys and values come only from that layer's own latent.\nR5. Each head writes a 64-d value and heads combine by concatenation into one 384×384 map.\nR6. Every head in every layer sees the same full causal context by the same mechanism.\nR7. Head count and head dimension are the same in every layer and throughout training.\nR8. wo is a token-independent linear map with no norm or gate.\nDropped: R2. What must change: roll the post-RoPE key tensor one position to the right for half the heads, zero-pad position 0, keep is_causal. Nothing else changes, training runs as before. That is leap 1 below. Leaps 2 to 4 each break a different rule (R5, R3, R4). Seeds 6, 7, 8, 9, 10, 11 were kept out as closer to the brief or weaker.\n\nIDEA: Shifted-key heads (one-hop induction)\nMECHANISM: For heads 3 to 5, the key at position j is the (post-RoPE) key of token j−1 while the value stays token j's; a query that matches \"the token before me last time\" directly reads \"what followed it\". Today this needs two layers (a previous-token head feeding an induction head); fusing it frees those layers for other circuits and should lower loss on repeated spans within 1024 tokens.\nPREDICTION: Zero parameter change, step time within 1%; training loss separates from baseline after the induction bump (roughly step 150 to 300), gap of 0.02 to 0.04 nats at 50M tokens, largest on late positions.\nTEST: 45-step matched smoke run on seed 0; 3-step timing; unit check that query i never sees token i+1 (compare logits for a sequence truncated at i).\nSOURCE: own\nTARGET: recall-token loss, down; loss at late positions, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The key a query scores and the value it reads belong to the same token.\nKEEPS: softmax causal attention, the latent KV path, QK-norm, RoPE on the rotary slice, the same wo and head count.\nP_SUCCESS: 0.18\nKILL: mean loss over steps 40 to 45 more than 0.02 nats above the baseline's at the same steps.\n\nIDEA: Latent-value heads (per-head rank-128 output maps)\nMECHANISM: Drop the V half of expand and the shared wo; each head aggregates the 128-d normalized latent directly as its value and writes it through its own 384×128 map. Today each head's value-to-output path is wo_h·E_v,h, rank 64 even though the latent has 128 dims; the cap is paid for nothing because at 6 heads the concatenation never uses the extra rank. DeepSeek-style absorption makes this free at inference; here it is applied at training time to raise per-head rank.\nPREDICTION: Non-embedding params 22.42M (+1.18M, under the 23.37M cap); SDPA value width 128 so step time +3 to 6%; loss gap of 0.01 to 0.02 nats at the end, visible from the start since it is capacity, not a circuit.\nTEST: --build-only parameter count; 3-step timing and peak VRAM (fails if memory-efficient kernel is forced and VRAM passes 5.6 GB); 45-step matched smoke run.\nSOURCE: own, builds on the MLA absorption in https://arxiv.org/pdf/2405.04434\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Each head writes a 64-d value and heads combine by concatenation into one 384×384 map.\nKEEPS: the 128-d latent, latent_norm, 6 query heads of 64+32, softmax causal attention, the same K path.\nP_SUCCESS: 0.15\nKILL: step-45 loss not below baseline by at least 0.005 nats, or step time above 5.3 s.\n\nIDEA: Re-query hop (two retrievals per layer, shared K/V)\nMECHANISM: After the first SDPA, feed the concatenated head output y through the existing wq and q_norm to form a second query and attend once more to the same K and V, then apply wo to the second result (first result added as a skip). A composition like \"find the entity, then find what it did\" takes two layers today; with shared K/V the second hop costs no parameters and lets 12 layers act like 24 hops for retrieval.\nPREDICTION: Zero new parameters; step time +12 to 18% (one extra SDPA and one extra wq matmul); loss gap 0.015 to 0.03 nats, appearing after step 200.\nTEST: 3-step timing (kill above 6.0 s); 45-step matched smoke run; ablation with the second hop's wo input zeroed to confirm the gain is from the hop.\nSOURCE: own\nTARGET: recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A layer retrieves once: one hop, then the result enters the stream.\nKEEPS: K/V, wq, wo, head layout and the residual write are unchanged; the second hop reuses existing tensors.\nP_SUCCESS: 0.12\nKILL: step-45 loss more than 0.01 nats above baseline, or step time above 6.0 s.\n\nIDEA: Two-depth keys (queries see the previous layer's K/V too)\nMECHANISM: Each layer concatenates its own K and V with the previous layer's K and V along the key axis and runs one softmax over 2T keys with a causal mask repeated twice. The query chooses depth as well as position, so a feature the stream overwrote between layers is still retrievable, and attention patterns can specialise by depth without doubling layers.\nPREDICTION: Zero new parameters; attention score and value compute doubles, roughly +10% forward, but the explicit mask forces the memory-efficient kernel, so step time +20 to 30%; memory is the risk at 0.1 GB headroom.\nTEST: 3-step timing and peak VRAM first (kill on VRAM above 5.6 GB); then 45-step matched smoke run; ablation where the previous layer's keys are masked out must recover baseline exactly.\nSOURCE: own, related to cross-layer KV sharing in https://arxiv.org/html/2607.02770 and value residuals in https://arxiv.org/html/2410.17897v4\nTARGET: attention entropy in deep layers, up; recall-token loss, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A layer's keys and values come only from that layer's own latent.\nKEEPS: the compress/expand path per layer, one softmax per head, wo, head count, causal order.\nP_SUCCESS: 0.10\nKILL: step-45 loss not below baseline by 0.005 nats, or VRAM above 5.6 GB, or step time above 6.5 s.\n\nIDEA: Learned sink key per head\nMECHANISM: Prepend a learned 96-d key per head and a zero value, plus a dummy zero query row so is_causal still aligns; every query can dump mass on the sink instead of on token 0. MiMo's ablation shows a measurable gain, and this architecture has no sink mechanism yet, so the first-token attention mass is wasted on an arbitrary token.\nPREDICTION: +576 parameters per layer; step time unchanged (flash kernel kept, T+1 keys); first-token attention mass falls sharply; loss gain 0.005 to 0.012 nats, mostly in the first half of training.\nTEST: 45-step matched smoke run; measure first-token attention mass on a fixed batch at step 45 with a manual softmax, baseline versus sink.\nSOURCE: https://arxiv.org/html/2601.02780v1\nTARGET: first-token attention mass, down; max attention logit, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Cheap per-head output gate\nMECHANISM: Multiply each head's SDPA output by sigmoid(x_norm[:, :, :32]·W_h) before wo, where x_norm is the attention input already in Attention.forward; the gate makes the head's write conditional on the token so a head can abstain instead of writing noise. This is the open test the brief asks for: whether the Qwen gate interacts with QK-norm and four-stream mixing, and whether it flattens the 10x layer-0 attention gradient.\nPREDICTION: +192 parameters per layer; step time +1%; gradient norm spread across layers shrinks; loss gain 0.005 to 0.01 nats.\nTEST: 45-step matched smoke run; log per-layer attention gradient norms at step 45 and compare the layer-0 to median ratio.\nSOURCE: https://sebastianraschka.com/llm-architecture-gallery/gated-attention/ and https://github.com/KellerJordan/modded-nanogpt\nTARGET: gradient norm spread, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Three heads of 128\nMECHANISM: Set n_head=3 so each head's content key is 128-d, matching the latent width; today a 64-d head key is a rank-64 slice of a 128-d latent, and the Pythia ablation says the penalty from small QK dims is the one head-size effect that is not neutral. Fewer heads also cut SDPA and wq cost.\nPREDICTION: Non-embedding params −442k; step time −3 to −5%; loss within ±0.01 nats of baseline, with the 12×32 arm clearly worse.\nTEST: Sweep n_head over {3, 6, 12} with 45-step matched smoke runs and --build-only counts; keep 3 only if it is not worse than 6 at step 45 and the timing gain is real.\nSOURCE: https://arxiv.org/pdf/2504.20938 and https://arxiv.org/pdf/2609.25802\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 13891,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20314,
+  "total_tokens": 37634
+ },
+ "cost_usd": 1.523075,
+ "duration_ms": 218567,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 37634,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "iron",
+  "note": "Sequence mixing: head count, head structure and output proje / outward / research",
+  "node": "attn_heads_outpu",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46806,
+ "raw": {
+  "duration_api_ms": 217144,
+  "stop_reason": "end_turn",
+  "session_id": "49d49aaa-29c7-42dd-a314-200198e415fe",
+  "total_cost_usd": 1.10170675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20314,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 13891,
+   "output_tokens_details": {
+    "thinking_tokens": 9960
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20314,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 13891,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20314,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20314
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 13891,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20314,
+    "webSearchRequests": 0,
+    "costUSD": 1.10170675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 9960,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 217238,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 13891,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20314,
+    "total_tokens": 37634
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 13891,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20314,
+    "total_tokens": 37634
+   },
+   "source": "usage"
+  }
+ }
+}

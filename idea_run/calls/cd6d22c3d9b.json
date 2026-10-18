@@ -1,0 +1,105 @@
+{
+ "call_id": "cd6d22c3d9b",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Mixing-blind learned head read\", \"members\": [\"s4a0fc72a03\"]},\n  {\"name\": \"Branch as fifth stream in Sinkhorn mixing\", \"members\": [\"sf7e0193cde\"]},\n  {\"name\": \"Depth-bucket streams with embedding reservoir\", \"members\": [\"s3ce224f465\"]},\n  {\"name\": \"Weight decay anchored at init\", \"members\": [\"s52abb696a5\"]},\n  {\"name\": \"Per-stream RMS normalization before read\", \"members\": [\"s18d2bfe530\"]},\n  {\"name\": \"Staggered one-hot write init (symmetry breaking)\", \"members\": [\"s2eac9dcbe6\", \"s140953b3d5\"]},\n  {\"name\": \"Lower mixing logit init (less identity)\", \"members\": [\"s5cf48e2bec\", \"s18fa64bbf5\"]},\n  {\"name\": \"RMSNorm on embedding before stream expand\", \"members\": [\"sdda6e64526\"]},\n  {\"name\": \"Signed writes (tanh gains)\", \"members\": [\"s6d20733947\"]},\n  {\"name\": \"Causal running-mean stream along positions\", \"members\": [\"s093ed44ef3\"]},\n  {\"name\": \"Write gain proportional to state RMS\", \"members\": [\"s7ba4696f18\"]},\n  {\"name\": \"Leapfrog attention/MLP stream split\", \"members\": [\"s5802a073df\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 1098,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 3817,
+  "total_tokens": 6485
+ },
+ "cost_usd": 0.03126,
+ "duration_ms": 9794,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 6485,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: depth_stream_mix/inward, 14 sketches"
+ },
+ "prompt_chars": 9030,
+ "raw": {
+  "duration_api_ms": 8418,
+  "stop_reason": "end_turn",
+  "session_id": "67af29b6-d4cd-4739-ab47-86e28e647382",
+  "total_cost_usd": 0.026408800000000003,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 3817,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 1098,
+   "output_tokens_details": {
+    "thinking_tokens": 613
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 3817,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1098,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 3817,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 3817
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 1098,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 3817,
+    "webSearchRequests": 0,
+    "costUSD": 0.026408800000000003,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 613,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 8485,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 1098,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3817,
+    "total_tokens": 6485
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 1098,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3817,
+    "total_tokens": 6485
+   },
+   "source": "usage"
+  }
+ }
+}

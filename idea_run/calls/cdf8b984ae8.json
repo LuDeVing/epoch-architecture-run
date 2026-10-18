@@ -1,0 +1,108 @@
+{
+ "call_id": "cdf8b984ae8",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- The mechanism's premise is wrong. Every read already sees all four streams through `softmax(read_logits)` over dim 2, so differences created by the writes reach every later read with no exchange at all. A doubly-stochastic mix acts on the deviation subspace (x − mean) only as a contraction. Its eigenvalue there is diag − off: 0.990 at init 6, 0.83 at 3, 0.615 at 2, 0.30 at 1. Over the 24 stages a deviation survives 0.79, 0.011, 9e-6 and 3e-13 respectively. Lowering the init does not route information between streams; it erases the streams within 1–2 stages and the model collapses to a single-stream residual. Cheapest check: log ‖x − mean‖/‖mean‖ at block 11 for init 6 vs init 2 at step 100; the ratio should fall by more than 10x. | severity: high | class: interaction_cancels | if_true: long_z below 2.33 | link: L3\n- The loss is blind to M while reads are near uniform. The final readout is `x.mean(dim=2)`, and the last Sinkhorn step normalises columns to exactly 1 in fp32, so the mean stream is invariant to mixing. With `read_logits = 0`, the gradient into `mix_logits` is zero up to bf16 rounding. The loss depends on M only through the product (read − 0.25) × spread, both about 0.02 early on, so any init effect is second order. Cheapest check: ‖grad mix_logits‖ against ‖grad write_logits‖ over steps 1–100. | severity: high | class: below_noise | if_true: learn_z below 1.0 | link: L2\n- Weight decay moves every arm toward full averaging. AdamW decay of 0.1 × 3e-3 over about 1280 effective full-lr steps shrinks each logit by about 0.68x. Init 6 ends near 4.1 (4.8% off-diagonal), init 2 near 1.36 (about 45%), and init 1 near 0.68 (about 66%, close to J/4 flat averaging). The low-init arms finish the cooldown as an exact single-stream model that still pays the 4-stream overhead, so any early benefit fades. Cheapest check: Sinkhorn output at steps 500, 1000 and 1526 for each arm. | severity: medium | class: early_only | if_true: trend below 0 | link: L1\n- The 45-step smoke sweep cannot rank the inits. `--smoke-steps 45` sets total_steps = 45, so warmup is 1 step and cooldown starts at step 31, which is a different schedule from the full run. By step 45, Muon has moved `read_logits` at most about 0.45, and the 2% write asymmetry has produced almost no spread. The four inits therefore differ by far less than seed noise, and the \"two best\" are chosen by noise. Cheapest check: rerun the smoke sweep on 2 seeds and see whether the ranking flips. | severity: medium | class: early_only | if_true: learn_z below 1.0\n- Implementation slip in parameter routing: `read_logits` and `write_logits` are 2-D (2×4), so `build_optimizers` sends them to Muon at lr 0.02, while `mix_logits` (3-D) goes to AdamW at 3e-3.\n  - Muon's Newton–Schulz step normalises noise into full-size updates of about 0.01 per entry per step. With decay, the logits equilibrate near ±5, so write gains `2*sigmoid` can swing anywhere in [0, 2].\n  - The orthogonalisation also forces the attention-stage and MLP-stage rows' updates to be mutually orthogonal, which is an arbitrary coupling.\n  - Read/write dynamics run about 3x faster than the mix logits and dominate both stream behaviour and seed variance, so the mix init is a second-order knob.\n  - Cheapest check: log `write_logits` and the read softmax at steps 100, 500 and 1500 across 3 seeds.\n  - | severity: medium | class: impl_slip | if_true: long_z below 2.33 | link: L2\n- The residual runs in bf16. Under autocast, `torch.einsum` dispatches to bmm in bf16, so from block 0's first `combine` onward the 4-stream residual is bf16; the baseline keeps an fp32 residual because fp32 x plus a bf16 branch promotes. At RMS of about 10 in late layers, updates below about 0.04 are rounded away, which hurts most in the cooldown. `mixing.to(x.dtype)` also breaks double stochasticity: at init 6 the diagonal rounds from 0.99262 to 0.99219, the row sum becomes 0.99957, and 24 stages give about 1% residual shrink. This applies to every init, so the whole sweep starts behind the baseline. Cheapest check: print `x.dtype` after block 0, then compare `loss_last` with the einsum forced to fp32. | severity: medium | class: impl_slip | if_true: long_z below 0 | link: L4\n- The target metric cannot move. Mean-stream RMS is invariant under column-stochastic mixing (L4 concedes this). Total RMS includes only the roughly 2% spread, so removing that spread changes the ×7.8 growth by less than 0.1%. The growth comes from the branch outputs and the mixing never touches it. | severity: low | class: metric_blind | if_true: none | link: L4\n- Two of the four streams are clones. Write logits for streams 2 and 3 are identical in both stages, their read logits are equal, and the mixing is swap-symmetric, so x₂ ≡ x₃ for the whole run up to rounding. The design is effectively 3 streams. As the variant itself says, mixing only pays off when streams differ, and without the staggered-write port the sweep tests mixing on nearly identical streams. Cheapest check: max |x₂ − x₃| at step 1000. | severity: low | class: interaction_cancels | if_true: long_z below 2.33 | link: L3\n- There is a hidden step cost, though the idea does not change it. Each stage runs 20 Sinkhorn iterations (40 tiny kernels) unrolled through autograd, × 24 stages × 8 micro-batches. That is roughly 25k extra launches per optimizer step on Windows/WDDM, all recomputing an M that only changes once per step. On top of that, the 4x residual traffic for reads and einsums makes the step ratio high before the sweep starts. | severity: low | class: hidden_cost | if_true: step_ratio above 1.5\n- The effect is below noise by the chain's own estimate. L5 predicts ±0.005, which equals the C7 margin. A one-sided Welch test at p < 0.01 with n = 3 needs a margin of several seed standard deviations, and the Muon-driven gate noise above inflates those standard deviations. | severity: high | class: below_noise | if_true: long_z below 2.33 | link: L5\n\nVERDICT: On a doubly-stochastic, swap-symmetric mix, a lower init only contracts stream differences (about 0.6 survival per stage at init 2), so the model collapses to the single-stream baseline while still paying the bf16 residual and Sinkhorn overhead, and it lands within noise of the baseline or slightly behind it.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 13109,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12653,
+  "total_tokens": 27332
+ },
+ "cost_usd": 1.222801,
+ "duration_ms": 133350,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 27332,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "depth_stream_mix-in-k06",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Lower mixing logit init (less identity)'",
+  "node": "depth_stream_mix"
+ },
+ "prompt_chars": 28567,
+ "raw": {
+  "duration_api_ms": 131921,
+  "stop_reason": "end_turn",
+  "session_id": "ab0d3f22-6323-481d-9c52-19ce13ab7939",
+  "total_cost_usd": 0.36372560000000004,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12653,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 13109,
+   "output_tokens_details": {
+    "thinking_tokens": 10637
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12653,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 13109,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12653,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12653
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 13109,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12653,
+    "webSearchRequests": 0,
+    "costUSD": 0.36372560000000004,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 10637,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 132019,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 13109,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12653,
+    "total_tokens": 27332
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 13109,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12653,
+    "total_tokens": 27332
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,105 @@
+{
+ "call_id": "c09439b8186",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"name\":\"Slow batch-level gain on MLP write\",\"members\":[\"s648165d2fc\"]},\n{\"name\":\"Divisive normalization across hidden units\",\"members\":[\"s4ae37d2a67\"]},\n{\"name\":\"Homeostatic usage-based gate bias\",\"members\":[\"s8890a9bf42\"]},\n{\"name\":\"Mixed activation populations\",\"members\":[\"sb2ca7b905f\"]},\n{\"name\":\"Depth-varying MLP width\",\"members\":[\"s5fbca7c400\"]},\n{\"name\":\"Token-shifted up projection\",\"members\":[\"s57726b8ae7\"]},\n{\"name\":\"Per-token output norm on MLP branch\",\"members\":[\"sdc92fb81ac\"]}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 234,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2000,
+  "total_tokens": 3804
+ },
+ "cost_usd": 0.011486,
+ "duration_ms": 5317,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 3804,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: mlp_swiglu/outward, 7 sketches"
+ },
+ "prompt_chars": 4296,
+ "raw": {
+  "duration_api_ms": 3315,
+  "stop_reason": "end_turn",
+  "session_id": "763a5610-511a-4735-a141-75d3a93c946f",
+  "total_cost_usd": 0.010500800000000001,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2000,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 234,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2000,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 234,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2000,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2000
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 234,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2000,
+    "webSearchRequests": 0,
+    "costUSD": 0.010500800000000001,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 3491,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 234,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2000,
+    "total_tokens": 3804
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 234,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2000,
+    "total_tokens": 3804
+   },
+   "source": "usage"
+  }
+ }
+}

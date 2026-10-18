@@ -1,0 +1,110 @@
+{
+ "call_id": "caa95a752e1",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Below are the scratch seeds, then seven sketches: four leaps (three built with the import operator, one plain leap) and three ports, all inside the MLP scope.\n\nPASS 1 (scratch):\n1. Write magnitude set by a slow running-power gain, not by weight norms (signal processing: AGC).\n2. Hidden units compete in small pools through divisive normalization (cortex / niche partitioning).\n3. Per-unit gate offsets adapted by a non-gradient usage-balancing rule (immunology: homeostatic proliferation).\n4. One hidden layer holds three activation populations instead of one (ecology: functional diversity).\n5. Layer pairs share gate and up matrices to buy a 1.5x wider hidden layer (public infrastructure). Killed by memory: +0.2 GB.\n6. Gate from the present token, value from the previous token (drops position-wise MLP). This is RWKV token shift: a port.\n7. Even layers read the two-token sum, odd layers the two-token difference (filter bank across depth). Only a restriction of 6.\n8. Gate temperature annealed over training (activation not fixed across phases). Cannot be killed at 45 steps.\n9. Subtract a running mean direction before the gate (negative selection). Equivalent to a tracked bias; weak.\n10. Per-token sigmoid that can zero the MLP write (unequal writes per token). Close to known output gating.\n11. Down projection tied to the up projection transpose (autoencoder MLP). Saves params, likely costs loss.\n12. Width varies with depth, reverse shape (drops uniform width). Open in the brief: a port.\n\nKept as full leaps: 1, 2, 3 (farthest from the brief), plus 4 as a fourth leap without the import operator.\n\nIDEA: Slow automatic gain control on the MLP write\nMECHANISM: Shared structure: a radio receiver chain has amplifier stages whose output envelope is measured over a window far longer than the signal, and a feedback gain keeps each stage inside the next stage's linear range; our chain is 12 blocks writing into a shared stream, the \"signal\" is the token-to-token variation of a write, the \"envelope\" is the batch-level RMS, and the stuck measurement is an MLP write RMS that drifts to 10.9 because magnitude can only be set by inflating three Muon-trained matrices against weight decay. Instantiation: the MLP keeps a detached running RMS of its own output (momentum 0.99, updated in train mode only) and returns output times exp(a) divided by that running RMS, with a one-element log-gain a per layer trained by AdamW and initialized to the log of the first measured RMS so step zero is an identity; the correspondence breaks because the ideal detector would watch the residual stream, which this part cannot read, and because the downstream norms are scale-invariant per token, so the gain only moves the ratio between this write and the other writes.\nPREDICTION: MLP output RMS stays within 2x of its initial per-layer level instead of growing to 10.9; matrix weight norms grow less; step time within 1%; parameters +12 and +12 buffers.\nTEST: 45 matched steps against the baseline curve; log per-layer write RMS and exp(a) every 10 steps; a 3-step smoke to confirm peak VRAM is unchanged.\nSOURCE: own\nTARGET: residual RMS growth, down; update-norm spread, down.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: the magnitude of a sublayer's write into the residual is decided by the norms of its weight matrices.\nKEEPS: SwiGLU with its three matrices, widths, Muon on the matrices, the scaled init, the 4-stream combine.\nP_SUCCESS: 0.15\nKILL: mean loss over steps 40 to 45 more than 0.03 nats above the baseline's at the same steps, or any layer's gain exp(a)/ema outside [0.02, 50].\n\nIDEA: Divisive normalization pools in the hidden layer\nMECHANISM: Shared structure: in visual cortex a neuron's drive is divided by the pooled energy of its neighbours plus a semi-saturation constant, which decorrelates responses and enforces a soft winner-take-all; ecology says the same thing as competitive exclusion, overlapping niches cannot coexist once resources are contested; our 1077 hidden units all read the same token vector with no lateral interaction, so nothing stops many units from learning the same feature. Instantiation: with the hidden size at 1072 (67 pools of 16, fewer parameters), the gated product p is replaced by p divided by the square root of one plus the pool's mean squared p, which is an identity for small activations and caps each pool's energy at 16; the correspondence breaks because cortical pools are spatially organized by tuning while ours are arbitrary index ranges whose partition must be learned, and cortical normalization has dynamics while ours is instantaneous.\nPREDICTION: mean pairwise correlation of hidden units within a layer falls; hidden RMS per unit stays below 1 by construction so the write-RMS growth has to go through the down projection alone; parameters −5,760; step time +2 to 4%; memory +0 (the pool statistics are tiny).\nTEST: 45 matched steps; measure hidden-unit correlation and per-layer write RMS on one batch at step 45; 3-step timing.\nSOURCE: own (import of Carandini and Heeger's canonical normalization)\nTARGET: loss on rare tokens, down; residual RMS growth, down.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: each hidden unit's activation is a function of its own pre-activations alone.\nKEEPS: SwiGLU form, three matrices, down-projection init, no change outside the MLP.\nP_SUCCESS: 0.12\nKILL: mean loss over steps 40 to 45 more than 0.02 nats above the baseline's, or the hidden-unit correlation unchanged within 5% (the mechanism is inert).\n\nIDEA: Homeostatic gate offsets, updated without gradients\nMECHANISM: Shared structure: the immune repertoire stays filled by homeostatic proliferation, a clone whose niche is empty receives unopposed survival cytokine and expands, so no antigen class goes unwatched; our hidden units are clones, the gate pre-activation is the activation threshold, and the unopposed signal is low usage; DeepSeek's aux-loss-free expert balancing is the same rule applied to experts, and nobody applies it to dense hidden units even though their usage is extremely skewed at small scale. Instantiation: the MLP keeps a per-unit usage buffer (running mean of squared gate activation) and a per-unit offset buffer added to the gate pre-activation only, updated each training forward by a fixed step of 1e-3 times the sign of the layer-median usage minus the unit's usage, clipped to [−1, 1]; the correspondence breaks because immune homeostasis acts on cell counts while we move thresholds, and because changing an offset without the gradient's consent perturbs a function the loss is already fitting.\nPREDICTION: the Gini coefficient of per-unit usage falls across training; more units carry signal, which should show first on low-frequency tokens; parameters unchanged, buffers +2 per hidden unit; step time within 2%; memory unchanged.\nTEST: 45 matched steps with the usage Gini logged at steps 1 and 45; compare to baseline; 3-step timing.\nSOURCE: own (import; the balancing rule is from https://arxiv.org/html/2606.19348v1 and the V3 aux-loss-free routing)\nTARGET: loss on rare tokens, down.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: every quantity that shapes the forward function is set by the gradient of the language-model loss.\nKEEPS: all weights and their optimizers, the gate's activation and width, the data and schedule.\nP_SUCCESS: 0.10\nKILL: mean loss over steps 40 to 45 more than 0.02 nats above the baseline's, or fewer than 5% of units ever hit a non-zero offset (inert).\n\nIDEA: Three activation populations in one hidden layer\nMECHANISM: Ecology's functional-diversity result says a community with complementary resource use is more productive than a monoculture of the single best species; the hidden layer is a monoculture of SiLU-gated units even though ReLU²-gated units (sparse, high-order) and plain bilinear units (smooth quadratic) tie or beat it in different regimes. Split the 1077 units into thirds: SiLU-gated, ReLU²-gated and bilinear with no activation, same three matrices, so the layer can route each feature to the nonlinearity that fits it.\nPREDICTION: parameters, memory and step time within 1% of the baseline; the down-projection column norms of the three populations stay within 2x of each other if all three are used; loss curve equal or slightly below the baseline from step 100 on.\nTEST: 45 matched steps; at step 45 read the three populations' column norms; a population below 30% of the others is dead weight and the idea fails.\nSOURCE: own (builds on https://arxiv.org/pdf/2402.03804)\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: all hidden units in a layer share one activation function.\nKEEPS: gated form, widths, init, optimizers.\nP_SUCCESS: 0.12\nKILL: mean loss over steps 40 to 45 more than 0.02 nats above the baseline's.\n\nIDEA: Reverse width allocation across depth\nMECHANISM: Keep the total feed-forward parameter count fixed but make the hidden size grow linearly from about 700 in layer 0 to about 1454 in layer 11 (mean 1077), so early layers that mostly do local lexical work are cheap and late layers that compose features get the capacity. The brief lists this open at 21M; the four-stream residual makes late layers see a richer read-out, which strengthens the case for putting width late.\nPREDICTION: parameters equal to the baseline (verified by build-only), total hidden activation memory equal, step time within 2%; loss 0.005 to 0.015 lower at 50M tokens. A stackable tune: raise the mean to 1150 using 0.9M of the parameter headroom if a 3-step smoke keeps peak VRAM under 5.6 GB.\nTEST: build-only parameter count, 3-step memory and timing, then 45 matched steps; discard if loss is 0.02 above the baseline's at step 45.\nSOURCE: https://arxiv.org/pdf/2509.06518\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Token-shifted value path in the gate\nMECHANISM: The up projection reads a per-channel learned blend of the current and previous token's normalized input (blend weight initialized to 1, so the start is the baseline) while the gate reads the current token only, so the MLP can form bigram features directly instead of spending attention heads on previous-token copying. Pretraining ablations of this inside a gated MLP are missing per the brief; RWKV uses it as a standing component.\nPREDICTION: parameters +384 per layer; memory +3 MB per layer; step time within 2%; the blend weights drift below 0.9 in early layers if the path is used; first-token attention mass drops as previous-token heads are freed.\nTEST: 45 matched steps plus the blend-weight values at step 45; a 3-step timing.\nSOURCE: https://arxiv.org/abs/2305.13048 and https://arxiv.org/pdf/2505.17153\nTARGET: first-token attention mass, down; validation loss, down.\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Peri-LN output norm on the MLP branch\nMECHANISM: Apply an RMSNorm with a learned per-channel scale to the MLP output before it is written, with the scale initialized small (about 0.1) so early writes stay modest. This is the instantaneous, per-token counterpart of the slow gain above: if this wins and the slow gain does not, per-token limiting matters; if the reverse, the batch-level gain was the point.\nPREDICTION: per-token write RMS is fixed by the learned scale; parameters +384 per layer; memory +3 MB per layer; step time within 2%; gradient norm spread across depth narrows.\nTEST: 45 matched steps against both the baseline and the slow-gain run; discard if loss is 0.02 above the baseline at step 45.\nSOURCE: https://arxiv.org/pdf/2502.02732\nTARGET: residual RMS growth, down; gradient norm spread, down.\nSCOPE: validation loss at 1024\nKIND: port",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 23242,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20092,
+  "total_tokens": 46763
+ },
+ "cost_usd": 2.266715,
+ "duration_ms": 333255,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 46763,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "eraser",
+  "note": "Per-token computation: SwiGLU MLP / outward / research",
+  "node": "mlp_swiglu",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 45733,
+ "raw": {
+  "duration_api_ms": 331874,
+  "stop_reason": "end_turn",
+  "session_id": "018d3d4a-7714-442c-88ff-d8b76128de55",
+  "total_cost_usd": 1.5648167499999999,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20092,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 23242,
+   "output_tokens_details": {
+    "thinking_tokens": 18914
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20092,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 23242,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20092,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20092
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 23242,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20092,
+    "webSearchRequests": 0,
+    "costUSD": 1.5648167499999999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 18914,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 331983,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 23242,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20092,
+    "total_tokens": 46763
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 23242,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20092,
+    "total_tokens": 46763
+   },
+   "source": "usage"
+  }
+ }
+}

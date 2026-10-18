@@ -1,0 +1,137 @@
+{
+ "node": "depth_norm_init",
+ "ts": "2026-10-15T01:16:15",
+ "queries": [
+  "modded-nanoGPT speedrun record log norm placement init changes",
+  "Hyper-Connections mHC manifold-constrained hyper-connections DeepSeek normalization initialization",
+  "Peri-LN post-branch normalization transformer pre-norm vs post-norm residual variance",
+  "LayerNorm scaling depth curse of depth pre-LN 1/sqrt(layer) normalization output",
+  "per-layer initialization scale fan-in muP transformer init std 0.02 small language models 2025",
+  "per-stream normalization hyper-connections residual streams RMSNorm each stream vs collapsed read-out",
+  "Hyper-Connections ICLR 2025 initialization identity static dynamic coefficients results OLMoE",
+  "Gemma 3 OLMo 2 post-norm QK-norm reordered norm output normalization sublayer results"
+ ],
+ "known": [
+  {
+   "name": "Peri-LN (norm on both sides of each sublayer)",
+   "mechanism": "Applies normalization to the sublayer input and to the sublayer output before the residual add, which bounds the variance each branch contributes to the stream.",
+   "effect": "Reported more balanced variance growth, steadier gradients and better convergence stability than Pre-LN and Post-LN. The search snippets gave no loss numbers.",
+   "where": "Models up to 3.2B parameters (ICML 2025)",
+   "url": "https://arxiv.org/html/2502.02732v3"
+  },
+  {
+   "name": "LayerNorm Scaling (LNS)",
+   "mechanism": "Multiplies each layer's norm output by 1/sqrt(layer index) so output variance does not grow with depth in Pre-LN.",
+   "effect": "Lower pre-training loss and perplexity than Pre-LN. One version snippet says it reaches Pre-LN's loss with about half the tokens. Combining it with scaled init reduces its benefit, so v3 recommends dropping scaled init.",
+   "where": "130M to 7B parameters",
+   "url": "https://arxiv.org/html/2502.05795v3"
+  },
+  {
+   "name": "OLMo 2 output-norm plus QK-norm",
+   "mechanism": "Moves RMSNorm onto the attention and MLP outputs (h = x + RMSNorm(Attn(x))) and adds QK-norm.",
+   "effect": "Neither change helps alone, but together they improve the growth and spikiness of the gradient L2 norm.",
+   "where": "OLMo 2 7B and 13B",
+   "url": "https://arxiv.org/pdf/2501.00656"
+  },
+  {
+   "name": "Mix-LN",
+   "mechanism": "Uses Post-LN in the early layers and Pre-LN in the deeper layers to even out gradient norms across depth.",
+   "effect": "Lowest perplexity at every size tested, for example 18.18 versus 18.65 for Pre-LN at 1B. Post-LN diverged at the larger sizes.",
+   "where": "LLaMA 71M to 1B, plus larger models up to 7B (ICLR 2025)",
+   "url": "https://arxiv.org/pdf/2412.13795"
+  },
+  {
+   "name": "HybridNorm",
+   "mechanism": "Normalizes the Q, K and V projections inside attention and uses a different norm placement in the FFN.",
+   "effect": "The HybridNorm* variant had the best average downstream score (60.67). Plain HybridNorm scored 59.18 against 59.56 for Pre-Norm, 59.02 for Post-Norm and 58.83 for Mix-LN.",
+   "where": "1.2B dense model, 200B tokens",
+   "url": "https://arxiv.org/pdf/2503.04598"
+  },
+  {
+   "name": "Hyper-Connections (static and dynamic)",
+   "mechanism": "Learns the strength of connections between depths across several residual streams. Pre-Norm and Post-Norm are special non-trainable cases.",
+   "effect": "The dynamic variant converged about 1.8x faster on OLMoE and gained 6 points on ARC-Challenge at 500B tokens. Adjacent-layer feature similarity was lower, which the authors read as less representation collapse.",
+   "where": "OLMoE and dense LLMs (ICLR 2025)",
+   "url": "https://arxiv.org/pdf/2409.19606"
+  },
+  {
+   "name": "mHC (manifold-constrained Hyper-Connections)",
+   "mechanism": "Projects the stream-mixing matrices onto the doubly stochastic manifold with Sinkhorn-Knopp to restore the identity-mapping and signal-conservation property.",
+   "effect": "Fixes the instability and scalability limits of unconstrained HC. A secondary blog gives about 1.6x signal amplification against about 3000x for unconstrained HC, at about 6.7% overhead. I did not check these figures against the paper.",
+   "where": "DeepSeek large-scale models (Dec 2025)",
+   "url": "https://arxiv.org/pdf/2512.24880"
+  },
+  {
+   "name": "NormFormer extra normalization",
+   "mechanism": "Adds extra norms inside the block (after attention, within the FFN, and per-head scaling) to offset the gradient-magnitude mismatch in Pre-LN.",
+   "effect": "Per its paper, early-layer gradients are much larger than later ones in Pre-LN, and the extra norms address this.",
+   "where": "Causal and masked LMs (2021)",
+   "url": "https://ar5iv.labs.arxiv.org/html/2110.09456"
+  },
+  {
+   "name": "ReZero / LayerScale (zero or small gated residual branches)",
+   "mechanism": "Gates each residual branch with a zero- or small-initialized scalar or diagonal so each layer starts as the identity.",
+   "effect": "ReZero trains 120-layer Transformers and converges 56% faster on 12-layer enwiki8. LayerScale follows the same motivation, for vision transformers.",
+   "where": "enwiki8 Transformers (ReZero); ViT (LayerScale)",
+   "url": "https://arxiv.org/abs/2003.04887"
+  },
+  {
+   "name": "Muon-era speedrun init (zero-initialized projections)",
+   "mechanism": "Initializes output projections and the classifier layer to zero, in a muP-like way.",
+   "effect": "The modded-nanogpt README lists it among the techniques behind the speedup. I found no isolated gain figure.",
+   "where": "nanoGPT speedrun (124M, fixed loss target)",
+   "url": "https://github.com/kellerjordan/modded-nanogpt"
+  }
+ ],
+ "failed": [
+  {
+   "name": "Scaled init combined with LayerNorm Scaling",
+   "why": "The LNS authors report that scaled initialization combined with LNS reduces LNS's benefit, so they recommend removing scaled init. This is the same interaction as the 1/sqrt(2 n_layer) branch scaling in this recipe.",
+   "url": "https://arxiv.org/html/2502.05795v3"
+  },
+  {
+   "name": "OLMo 2 output-norm or QK-norm used alone",
+   "why": "The OLMo 2 ablations found that neither change alone gives good results. The benefit comes only from using them together.",
+   "url": "https://arxiv.org/pdf/2501.00656"
+  },
+  {
+   "name": "Plain HybridNorm vs Pre-Norm",
+   "why": "Plain HybridNorm scored 59.18 on average downstream, below Pre-Norm at 59.56. Only the HybridNorm* variant beat it.",
+   "url": "https://arxiv.org/pdf/2503.04598"
+  },
+  {
+   "name": "Per-layer muP initialization at 10M to 500M parameters",
+   "why": "In one study, the authors' default initialization beat the per-layer muP variant by 0.68 to 0.92 nats of training loss. muP's optimal learning rate was only more stable across sizes. This is a non-language event-sequence setting and may not transfer to text.",
+   "url": "https://arxiv.org/pdf/2606.05257"
+  }
+ ],
+ "open": [
+  {
+   "direction": "Per-stream normalization, or joint normalization over the flattened multi-stream state, compared with normalizing the collapsed read-out",
+   "why": "I found xHC normalizing the flattened multi-stream state, but no ablation of per-stream, joint and collapsed read-out norms in mHC-style models.",
+   "url": "https://arxiv.org/pdf/2607.14530"
+  },
+  {
+   "direction": "Depth-dependent norm scaling, such as 1/sqrt(l), combined with stream-mixing weights and no scaled branch init",
+   "why": "LNS shows scaled init and depth-scaled norms interact badly in plain residuals. Nobody has tested this when learned or doubly stochastic mixing weights control the residual.",
+   "url": "https://arxiv.org/html/2502.05795v3"
+  },
+  {
+   "direction": "Different init or learning rate for early layers, to equalize the large early-layer gradients, instead of structurally identical layers",
+   "why": "NormFormer documents that early-layer gradients are much larger than later ones in Pre-LN. I found no source testing a per-layer init or learning rate for this.",
+   "url": "https://ar5iv.labs.arxiv.org/html/2110.09456"
+  },
+  {
+   "direction": "Scaling the input weights of attention and MLP instead of scaling the output (Curse-of-Depth-style fix)",
+   "why": "A non-peer-reviewed blog reports that scaling the input weights beat output scaling, and that pre-softmax attention scores grow unchecked in later layers. This is untested at small scale and in architectures with mixing weights.",
+   "url": "https://www.ceramic.ai/blog/curseofdepth"
+  },
+  {
+   "direction": "Fan-in-aware init (muP-style) for compress, expand, rotary and head projections instead of uniform std 0.02",
+   "why": "The Decoder-Hybrid-Decoder paper compares muP, muP++ and standard parameterization (std 0.02 tied, 1e-4 untied embeddings). I found no controlled test at about 21M parameters.",
+   "url": "https://arxiv.org/pdf/2507.06607"
+  }
+ ],
+ "backend": "cli_json",
+ "source": "web"
+}

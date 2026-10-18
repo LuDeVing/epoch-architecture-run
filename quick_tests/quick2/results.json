@@ -1,0 +1,38 @@
+{
+ "single_mix_init2": {
+  "steps": 300,
+  "last50": 5.1588,
+  "at100": 6.1055,
+  "step_s": 2.61,
+  "params_nonembed": 21242304,
+  "vram": 3.12,
+  "error": null
+ },
+ "single_gated_latent": {
+  "steps": 300,
+  "last50": 5.1577,
+  "at100": 6.1154,
+  "step_s": 2.7,
+  "params_nonembed": 21832128,
+  "vram": 3.17,
+  "error": null
+ },
+ "single_hard_reads": {
+  "steps": 300,
+  "last50": 5.1441,
+  "at100": 6.0965,
+  "step_s": 2.42,
+  "params_nonembed": 21242208,
+  "vram": 3.05,
+  "error": null
+ },
+ "single_write_ratio": {
+  "steps": 300,
+  "last50": 5.2033,
+  "at100": 6.1697,
+  "step_s": 2.8,
+  "params_nonembed": 21242316,
+  "vram": 3.14,
+  "error": null
+ }
+}

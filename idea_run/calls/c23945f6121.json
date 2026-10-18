@@ -1,0 +1,120 @@
+{
+ "call_id": "c23945f6121",
+ "role": "research",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n{\n  \"known\": [\n    {\n      \"name\": \"Peri-LN (norm on both sides of each sublayer)\",\n      \"mechanism\": \"Applies normalization to the sublayer input and to the sublayer output before the residual add, which bounds the variance each branch contributes to the stream.\",\n      \"effect\": \"Reported more balanced variance growth, steadier gradients and better convergence stability than Pre-LN and Post-LN. The search snippets gave no loss numbers.\",\n      \"where\": \"Models up to 3.2B parameters (ICML 2025)\",\n      \"url\": \"https://arxiv.org/html/2502.02732v3\"\n    },\n    {\n      \"name\": \"LayerNorm Scaling (LNS)\",\n      \"mechanism\": \"Multiplies each layer's norm output by 1/sqrt(layer index) so output variance does not grow with depth in Pre-LN.\",\n      \"effect\": \"Lower pre-training loss and perplexity than Pre-LN. One version snippet says it reaches Pre-LN's loss with about half the tokens. Combining it with scaled init reduces its benefit, so v3 recommends dropping scaled init.\",\n      \"where\": \"130M to 7B parameters\",\n      \"url\": \"https://arxiv.org/html/2502.05795v3\"\n    },\n    {\n      \"name\": \"OLMo 2 output-norm plus QK-norm\",\n      \"mechanism\": \"Moves RMSNorm onto the attention and MLP outputs (h = x + RMSNorm(Attn(x))) and adds QK-norm.\",\n      \"effect\": \"Neither change helps alone, but together they improve the growth and spikiness of the gradient L2 norm.\",\n      \"where\": \"OLMo 2 7B and 13B\",\n      \"url\": \"https://arxiv.org/pdf/2501.00656\"\n    },\n    {\n      \"name\": \"Mix-LN\",\n      \"mechanism\": \"Uses Post-LN in the early layers and Pre-LN in the deeper layers to even out gradient norms across depth.\",\n      \"effect\": \"Lowest perplexity at every size tested, for example 18.18 versus 18.65 for Pre-LN at 1B. Post-LN diverged at the larger sizes.\",\n      \"where\": \"LLaMA 71M to 1B, plus larger models up to 7B (ICLR 2025)\",\n      \"url\": \"https://arxiv.org/pdf/2412.13795\"\n    },\n    {\n      \"name\": \"HybridNorm\",\n      \"mechanism\": \"Normalizes the Q, K and V projections inside attention and uses a different norm placement in the FFN.\",\n      \"effect\": \"The HybridNorm* variant had the best average downstream score (60.67). Plain HybridNorm scored 59.18 against 59.56 for Pre-Norm, 59.02 for Post-Norm and 58.83 for Mix-LN.\",\n      \"where\": \"1.2B dense model, 200B tokens\",\n      \"url\": \"https://arxiv.org/pdf/2503.04598\"\n    },\n    {\n      \"name\": \"Hyper-Connections (static and dynamic)\",\n      \"mechanism\": \"Learns the strength of connections between depths across several residual streams. Pre-Norm and Post-Norm are special non-trainable cases.\",\n      \"effect\": \"The dynamic variant converged about 1.8x faster on OLMoE and gained 6 points on ARC-Challenge at 500B tokens. Adjacent-layer feature similarity was lower, which the authors read as less representation collapse.\",\n      \"where\": \"OLMoE and dense LLMs (ICLR 2025)\",\n      \"url\": \"https://arxiv.org/pdf/2409.19606\"\n    },\n    {\n      \"name\": \"mHC (manifold-constrained Hyper-Connections)\",\n      \"mechanism\": \"Projects the stream-mixing matrices onto the doubly stochastic manifold with Sinkhorn-Knopp to restore the identity-mapping and signal-conservation property.\",\n      \"effect\": \"Fixes the instability and scalability limits of unconstrained HC. A secondary blog gives about 1.6x signal amplification against about 3000x for unconstrained HC, at about 6.7% overhead. I did not check these figures against the paper.\",\n      \"where\": \"DeepSeek large-scale models (Dec 2025)\",\n      \"url\": \"https://arxiv.org/pdf/2512.24880\"\n    },\n    {\n      \"name\": \"NormFormer extra normalization\",\n      \"mechanism\": \"Adds extra norms inside the block (after attention, within the FFN, and per-head scaling) to offset the gradient-magnitude mismatch in Pre-LN.\",\n      \"effect\": \"Per its paper, early-layer gradients are much larger than later ones in Pre-LN, and the extra norms address this.\",\n      \"where\": \"Causal and masked LMs (2021)\",\n      \"url\": \"https://ar5iv.labs.arxiv.org/html/2110.09456\"\n    },\n    {\n      \"name\": \"ReZero / LayerScale (zero or small gated residual branches)\",\n      \"mechanism\": \"Gates each residual branch with a zero- or small-initialized scalar or diagonal so each layer starts as the identity.\",\n      \"effect\": \"ReZero trains 120-layer Transformers and converges 56% faster on 12-layer enwiki8. LayerScale follows the same motivation, for vision transformers.\",\n      \"where\": \"enwiki8 Transformers (ReZero); ViT (LayerScale)\",\n      \"url\": \"https://arxiv.org/abs/2003.04887\"\n    },\n    {\n      \"name\": \"Muon-era speedrun init (zero-initialized projections)\",\n      \"mechanism\": \"Initializes output projections and the classifier layer to zero, in a muP-like way.\",\n      \"effect\": \"The modded-nanogpt README lists it among the techniques behind the speedup. I found no isolated gain figure.\",\n      \"where\": \"nanoGPT speedrun (124M, fixed loss target)\",\n      \"url\": \"https://github.com/kellerjordan/modded-nanogpt\"\n    }\n  ],\n  \"failed\": [\n    {\n      \"name\": \"Scaled init combined with LayerNorm Scaling\",\n      \"why\": \"The LNS authors report that scaled initialization combined with LNS reduces LNS's benefit, so they recommend removing scaled init. This is the same interaction as the 1/sqrt(2 n_layer) branch scaling in this recipe.\",\n      \"url\": \"https://arxiv.org/html/2502.05795v3\"\n    },\n    {\n      \"name\": \"OLMo 2 output-norm or QK-norm used alone\",\n      \"why\": \"The OLMo 2 ablations found that neither change alone gives good results. The benefit comes only from using them together.\",\n      \"url\": \"https://arxiv.org/pdf/2501.00656\"\n    },\n    {\n      \"name\": \"Plain HybridNorm vs Pre-Norm\",\n      \"why\": \"Plain HybridNorm scored 59.18 on average downstream, below Pre-Norm at 59.56. Only the HybridNorm* variant beat it.\",\n      \"url\": \"https://arxiv.org/pdf/2503.04598\"\n    },\n    {\n      \"name\": \"Per-layer muP initialization at 10M to 500M parameters\",\n      \"why\": \"In one study, the authors' default initialization beat the per-layer muP variant by 0.68 to 0.92 nats of training loss. muP's optimal learning rate was only more stable across sizes. This is a non-language event-sequence setting and may not transfer to text.\",\n      \"url\": \"https://arxiv.org/pdf/2606.05257\"\n    }\n  ],\n  \"open\": [\n    {\n      \"direction\": \"Per-stream normalization, or joint normalization over the flattened multi-stream state, compared with normalizing the collapsed read-out\",\n      \"why\": \"I found xHC normalizing the flattened multi-stream state, but no ablation of per-stream, joint and collapsed read-out norms in mHC-style models.\",\n      \"url\": \"https://arxiv.org/pdf/2607.14530\"\n    },\n    {\n      \"direction\": \"Depth-dependent norm scaling, such as 1/sqrt(l), combined with stream-mixing weights and no scaled branch init\",\n      \"why\": \"LNS shows scaled init and depth-scaled norms interact badly in plain residuals. Nobody has tested this when learned or doubly stochastic mixing weights control the residual.\",\n      \"url\": \"https://arxiv.org/html/2502.05795v3\"\n    },\n    {\n      \"direction\": \"Different init or learning rate for early layers, to equalize the large early-layer gradients, instead of structurally identical layers\",\n      \"why\": \"NormFormer documents that early-layer gradients are much larger than later ones in Pre-LN. I found no source testing a per-layer init or learning rate for this.\",\n      \"url\": \"https://ar5iv.labs.arxiv.org/html/2110.09456\"\n    },\n    {\n      \"direction\": \"Scaling the input weights of attention and MLP instead of scaling the output (Curse-of-Depth-style fix)\",\n      \"why\": \"A non-peer-reviewed blog reports that scaling the input weights beat output scaling, and that pre-softmax attention scores grow unchecked in later layers. This is untested at small scale and in architectures with mixing weights.\",\n      \"url\": \"https://www.ceramic.ai/blog/curseofdepth\"\n    },\n    {\n      \"direction\": \"Fan-in-aware init (muP-style) for compress, expand, rotary and head projections instead of uniform std 0.02\",\n      \"why\": \"The Decoder-Hybrid-Decoder paper compares muP, muP++ and standard parameterization (std 0.02 tied, 1e-4 untied embeddings). I found no controlled test at about 21M parameters.\",\n      \"url\": \"https://arxiv.org/pdf/2507.06607\"\n    }\n  ],\n  \"queries\": [\n    \"modded-nanoGPT speedrun record log norm placement init changes\",\n    \"Hyper-Connections mHC manifold-constrained hyper-connections DeepSeek normalization initialization\",\n    \"Peri-LN post-branch normalization transformer pre-norm vs post-norm residual variance\",\n    \"LayerNorm scaling depth curse of depth pre-LN 1/sqrt(layer) normalization output\",\n    \"per-layer initialization scale fan-in muP transformer init std 0.02 small language models 2025\",\n    \"per-stream normalization hyper-connections residual streams RMSNorm each stream vs collapsed read-out\",\n    \"Hyper-Connections ICLR 2025 initialization identity static dynamic coefficients results OLMoE\",\n    \"Gemma 3 OLMo 2 post-norm QK-norm reordered norm output normalization sublayer results\",\n    \"zero-initialized output projection residual branch ReZero SkipInit LayerScale small LLM pretraining 2025 depth-wise init\",\n    \"HybridNorm Mix-LN SiameseNorm normalization placement LLM pretraining results\",\n    \"Scaled initialization hurts LayerNorm Scaling; layer-wise learning rate or init first layers different, first layers attention entropy gradient norm differ\"\n  ]\n}\n```",
+ "usage": {
+  "input_tokens": 152115,
+  "output_tokens": 15197,
+  "cache_read_input_tokens": 35018,
+  "cache_creation_input_tokens": 16469,
+  "total_tokens": 218799
+ },
+ "cost_usd": 0.756564,
+ "duration_ms": 54569,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 4000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 218799,
+ "over_cap": true,
+ "meta": {
+  "card": "research",
+  "operator": "depth_norm_init",
+  "note": "web search: State across depth: normalization placement and initializati"
+ },
+ "prompt_chars": 3322,
+ "raw": {
+  "duration_api_ms": 103740,
+  "stop_reason": "end_turn",
+  "session_id": "307239dd-5375-446c-a23e-ad874bc0444d",
+  "total_cost_usd": 0.24974099999999996,
+  "usage": {
+   "input_tokens": 8,
+   "cache_creation_input_tokens": 16469,
+   "cache_read_input_tokens": 35018,
+   "output_tokens": 5004,
+   "output_tokens_details": {
+    "thinking_tokens": 112
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 16469,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 3738,
+     "cache_read_input_tokens": 16590,
+     "cache_creation_input_tokens": 2740,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2740
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 8,
+    "outputTokens": 5004,
+    "cacheReadInputTokens": 35018,
+    "cacheCreationInputTokens": 16469,
+    "webSearchRequests": 0,
+    "costUSD": 0.11943379999999999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 112,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   },
+   "claude-haiku-5-5": {
+    "inputTokens": 152107,
+    "outputTokens": 10193,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 11,
+    "costUSD": 0.13030719999999998,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 2029,
+    "canonicalModel": "claude-haiku-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 12,
+  "duration_ms": 53423,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 5004,
+    "cache_read_input_tokens": 35018,
+    "cache_creation_input_tokens": 16469,
+    "total_tokens": 56499
+   },
+   "model_usage_sum": {
+    "input_tokens": 152115,
+    "output_tokens": 15197,
+    "cache_read_input_tokens": 35018,
+    "cache_creation_input_tokens": 16469,
+    "total_tokens": 218799
+   },
+   "source": "modelUsage"
+  }
+ }
+}

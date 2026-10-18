@@ -1,0 +1,108 @@
+{
+ "call_id": "c47c54788d3",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- **Muon removes the cost L3 claims to free.** Each Muon step applies `lr*scale*NS5(g)`, a fixed-size orthogonalized update, no matter whether the loss \"wants\" larger weights. Matrix norms in both arms are set by the Muon/weight-decay equilibrium (`p.mul_(1 - 0.02*0.1)` per step, about e^-3 over 1525 steps), not by a fight over magnitude. Taking away the radial gradient component, which is a small share of g, barely changes the orthogonalized direction. So the ||dw||/||w|| spread and the weight norms move a few percent at most, and nothing downstream improves. Cheapest check: log per-matrix ||w|| and ||dw||/||w|| at steps 10/50/100 in both arms; the MLP medians should match within 5% | severity: high | class: interaction_cancels | if_true: long_z below 1.0 | link: L3\n- **Fixing the residual growth does not change the loss.** Every consumer of the stream is behind an RMSNorm (`n1`, `n2`, final `norm`, plus `q_norm`/`k_norm`), so absolute stream scale only matters as a ratio between writers. The baseline grows MLP writes so that deep layers stay audible against the accumulated stream. AGC then just moves that same magnitude into `exp(a)`, which AdamW at 3e-3 can shift by about 4.5 in log over the run. The end state is the same function with a different parameterization, so the gain is well under 0.005 nats. With seed noise at a similar size, Welch at p<0.01 on 3 seeds cannot pass | severity: high | class: below_noise | if_true: long_z below 2.33 | link: L4\n- **Attention dominates the growth, so L2 fails.** Attention writes through `wo` and the Sinkhorn/`write_logits` combine are untouched. The 1.403→10.893 figure is the stream after each whole block, with the MLP share unmeasured. If attention writes carry most of the growth, the stream ratio stays at x7 or more and nothing in the chain moves. Cheapest check: one 100-step baseline run that logs per-layer RMS of the `branch` tensor separately for attn and mlp before `combine` | severity: medium | class: interaction_cancels | if_true: learn_z below 0.5 | link: L2\n- **Only helps early.** The x7.8 growth was measured at step 100, the high-LR transient. Over the 30% linear cooldown to lr=0 both arms settle, so any early edge from bounded writes shrinks by the end. The 40–45 step kill test cannot see this decay | severity: medium | class: early_only | if_true: trend below 0\n- **Exam-time buffer handling.** The harness rebuilds `GPT(cfg)` and loads `model.pt`. If the EMA is registered with `persistent=False`, it loads at its init value (for example 1.0) instead of about 0.01, and every MLP write is off by about 75x, which is catastrophic. If the EMA update is not guarded by `self.training`, the 2M exam tokens keep moving it during evaluation. Cheapest check: reload `model.pt` into a fresh `GPT(cfg)`, compare the logits to the in-memory model, and confirm `ema` is in `state_dict().keys()` | severity: high | class: impl_slip | if_true: fidelity below 1.0\n- **Weight decay pulls the gain parameter toward the wrong value.** `a` is 0-d or 1-d, so `build_optimizers` puts it in the AdamW group with `weight_decay=0.1`. If `a` is initialized to log(initial write RMS), about log(0.013) ≈ -4.3 given the 0.02/√24 `w_down` init, decay pulls `a` toward 0, which is a gain of 1, about 75x the scaled-init write. That is a steady upward drift working against the intended control. If instead `a=0` at init, the scaled `w_down` init is cancelled from step 0, although KEEPS promises to keep it | severity: medium | class: impl_slip | if_true: learn_z below 0\n- **EMA lag is in micro-batches and its start is unspecified.** The momentum got truncated out of the spec (\"mome…\"), and `accum=8`, so the EMA updates 8 times per optimizer step. A momentum chosen \"per step\" lags 8x less than intended, and the batch-noise in c rises. An EMA initialized at 0 without bias correction divides by roughly zero and gives inf/NaN at step 1. An EMA initialized at 1 gives about a 75x too-small write until it decays, which is exactly the warmup overshoot L1 predicts | severity: medium | class: impl_slip | if_true: learn_z below 0 | link: L1\n- **In-place EMA update can break autograd.** If `ema` is used in `x/ema` (saved for backward) and then updated in place with `mul_/add_` in the same forward, backward raises a version-counter error. A builder who \"fixes\" this by computing c from the current batch's RMS before updating creates batch-dependent normalization in training but EMA normalization at the exam, a train/exam mismatch | severity: low | class: impl_slip | if_true: fidelity below 1.0\n- **Feedback loop with a detached controller.** The gradient on the MLP matrices treats c as a constant, so the optimizer keeps pushing the output RMS up. τ steps later the EMA cancels it. Muon momentum (0.95) plus EMA lag form a second-order loop that can ring: the gain oscillates and so does the effective step size on the MLP. That adds update noise exactly where the idea claims to reduce it | severity: medium | class: interaction_cancels | if_true: learn_z below 0 | link: L1\n- **Global grad clip couples the MLP to everything else.** Gradients into the MLP matrices scale with c, which is ∝ 1/||W||. As decay shrinks the now scale-invariant `w_up`/`w_down`, their gradients grow, and `clip_grad_norm_(..., 1.0)` over all parameters triggers more often. Each trigger shrinks the AdamW updates for the embeddings, tied head, norms and mixing logits; Muon is scale-invariant and unaffected. The embeddings and head pay for the MLP change. Cheapest check: log the pre-clip total norm and the clip rate in both arms | severity: medium | class: hidden_cost | if_true: long_z below 0\n- **Scale invariance plus weight decay raises the late effective LR.** With the output normalized, `w_up`/`w_down` behave like BatchNorm-plus-weight-decay weights: their norm shrinks, while Muon's fixed-size update stays the same, so the angular step grows over training. This partly cancels the cooldown for the MLP and leaves it noisier than the baseline in the final 30% | severity: low | class: early_only | if_true: trend below 0\n- **Hidden host syncs.** Logging `exp(a)/ema` every 10 steps, or a builder writing `float(ema)` or `.item()` inside the forward, adds 12 layers × 8 micro-batches of host syncs per step. The 1% step-time prediction breaks, though it stays well under the 2x limit | severity: low | class: hidden_cost | if_true: step_ratio above 1.05\n\nVERDICT: Under pre-norm RMSNorm reads and Muon's fixed-size orthogonalized updates, the AGC only re-parameterizes write magnitude into `exp(a)` that the network can relearn, so the final exam loss stays inside seed noise (no 0.005-nat, p<0.01 win); the only way it moves the metric visibly is downward, through a mishandled `ema` buffer or a decayed `a`.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 7880,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12494,
+  "total_tokens": 21944
+ },
+ "cost_usd": 0.827645,
+ "duration_ms": 88480,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 21944,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "mlp_swiglu-ou-k00",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Slow batch-level gain on MLP write'",
+  "node": "mlp_swiglu"
+ },
+ "prompt_chars": 28011,
+ "raw": {
+  "duration_api_ms": 87209,
+  "stop_reason": "end_turn",
+  "session_id": "80c10baa-94e3-4185-810f-5b49105df406",
+  "total_cost_usd": 0.2578736,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12494,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 7880,
+   "output_tokens_details": {
+    "thinking_tokens": 5261
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12494,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 7880,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12494,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12494
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 7880,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12494,
+    "webSearchRequests": 0,
+    "costUSD": 0.2578736,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 5261,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 87304,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 7880,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12494,
+    "total_tokens": 21944
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 7880,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12494,
+    "total_tokens": 21944
+   },
+   "source": "usage"
+  }
+ }
+}

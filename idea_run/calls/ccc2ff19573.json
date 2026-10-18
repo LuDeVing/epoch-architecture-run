@@ -1,0 +1,108 @@
+{
+ "call_id": "ccc2ff19573",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- **Fast rotary pairs scramble the copied content.** The script's `rope_cache(T, 32, 10000)` gives the rotated slice wavelengths of 2π·10000^(k/16): 6.3, 11, 20, 35 and 63 tokens for k=0–4. An induction head copies a token from an offset that varies from window to window. In those pairs the copied value therefore reaches `wo` at an arbitrary phase, and `wo` can only use their phase-invariant pair norms. That spends roughly 10 of every head's 64 value dims, about 15% of copy bandwidth, to buy an offset signal the copy does not need. It can raise recall loss instead of lowering it. Cheapest check: in the 45-step smoke, split recall loss by offset into <64 and >300 tokens. If the long-offset recall gets worse, this is the cause. | severity: high | class: interaction_cancels | if_true: learn_z above 0 | link: L4\n- **The phase cannot be decoded without the content.** The output is R(ωδ)v_j. Reading δ from it requires knowing v_j, and v_j varies across tokens. `wo` is linear and the SwiGLU MLP is shallow, so neither can separate content from phase except through products of pairs. The offset signal therefore stays entangled with the payload, and no decodable offset reaches the residual stream. Cheapest check: run L3's probe at layers 4–8. If accuracy is at the baseline level, this is the cause. | severity: high | class: metric_blind | if_true: long_z above -1 | link: L3\n- **The cost lands on layer 0, the most important attention layer.** Layers 0–2 have entropy 0.85–0.96. With attention that diffuse, Σa·e^{iωδ} averages the fast pairs toward zero, so half the value dims in those layers become noise. Layer 0's attention gradient is the run's biggest anomaly (0.29, z 7.0 on 3 seeds), which says the network leans hardest on exactly that layer. Losing value capacity there costs non-recall loss, which is 87% of targets, more than any recall gain returns. Cheapest check: measure the rotated/unrotated RMS ratio in layer 0, and the non-recall loss at step 45. | severity: high | class: interaction_cancels | if_true: learn_z above 0 | link: L5\n- **The effect is too small to pass the test.** Recall tokens are 13% of exam targets. Even the chain's own expected gain of −0.02 to −0.10 on recall is only −0.003 to −0.013 nats overall, before any non-recall cost. C7 needs a margin of more than 0.005 at p<0.01 with 3 seeds. With seed standard deviation typically around 0.005–0.01 at 50M tokens, that requires a true effect of about 0.015 or more. L6's own range (−0.015 to +0.01) almost never clears that. | severity: high | class: below_noise | if_true: long_z above -2.5 | link: L6\n- **The early advantage disappears.** At step 100 the baseline has no mature induction circuit, and recall loss is 4.48. Explicit offset phase might give a head start. Over the full run (50M/32768 ≈ 1525 steps), standard previous-token-plus-induction circuits form through the shared rotary key and the 4-stream mixing anyway. The matched-step gap would then shrink toward zero by the cooldown, even if the 45-step smoke passes. Cheapest check: plot the gap in `loss_curve` against the baseline over steps. | severity: medium | class: early_only | if_true: trend above 0 | link: L4\n- **Implementation slip: the inverse rotation is applied after transposing.** `apply_rope` slices `cos[: x.size(2)]`. A builder who inverse-rotates `y` after `y.transpose(1, 2)`, which has shape (B,T,H,D), gets `cos[:6]` of shape (6,16). That broadcasts silently against (B,T,6,16), so the output is rotated by *head index* rather than by query position. The result is R(ωj − ω·h)v. Training runs, the parameter count is unchanged, and no error is raised. Cheapest check: the L1 one-hot test at δ=0, asserting that the output equals v. | severity: high | class: impl_slip | if_true: fidelity below 1 | link: L1\n- **Implementation slip: the inverse rotation does not negate sine.** Reusing `apply_rope(y, cos, sin)` for the readout, instead of `apply_rope(y, cos, -sin)`, gives R(ω(i+j)) rather than R(ω(j−i)). That puts absolute position into half of each value head, and the model degrades at positions it rarely sees late in the window. Late-window loss is already 0.46 nats above early-window loss. Cheapest check: the same δ=0 unit test, run at i=j=500. | severity: medium | class: impl_slip | if_true: fidelity below 1 | link: L1\n- **The wrong variant was chosen.** The idea text says \"first 32 of 64\". Only a narrower slice, about 16 dims with wavelengths of 600 to 35k (k≥8), would carry offset at a scale useful within a 1024 context without scrambling content. Building the \"first 32\" version faithfully includes all 8 fast pairs: the damage of objections 1 and 3 with no decodable gain. Cheapest check: run the 45-step smoke for both variants and compare. | severity: medium | class: impl_slip | if_true: learn_z above 0 | link: L2\n- **The step-time estimate is optimistic.** SDPA cannot fuse the rotation, so each of the 12 layers adds two rotations on (4,6,1024,32) tensors. Each `cat` allocates fresh tensors, and backward saves them. On a 4050 already bound by the 4-stream einsums, the realistic overhead is +3–6%, not +1%. That stays within C4, but it is a hidden cost. | severity: low | class: hidden_cost | if_true: step_ratio above 1.05\n- **bf16 rotation adds noise to half of every value head.** `apply_rope` casts cos/sin to bf16. At positions near 1000, rotating forward then back accumulates relative error of around 2^-8 on every value, including δ=0 self-copies. That adds small noise across all 12 layers, which works against the late-training gains where margins are around 0.005. Cheapest check: L1's error at T=1024. | severity: low | class: hidden_cost | if_true: none | link: L1\n- **The test metric misses the actual effect.** The KILL criterion uses recall-token loss at 45 steps. If the matched smoke is not paired by seed, recall-loss noise at that point is probably larger than 0.03, so the gate can pass on chance. The exam averages over all tokens, where the non-recall cost dominates. | severity: medium | class: metric_blind | if_true: long_z above 0 | link: L4\n\nVERDICT: Rotating the fast-wavelength value pairs makes the copied content arrive at an offset-dependent phase that `wo` cannot undo, so induction loses value bandwidth and diffuse early layers (layer 0 especially) lose payload, while the offset signal stays entangled with content and undecodable; the net exam change is zero or slightly worse and far below the 0.005/p<0.01 bar.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 5224,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 13146,
+  "total_tokens": 19940
+ },
+ "cost_usd": 0.64067,
+ "duration_ms": 58785,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 19940,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "attn_rope_norm-in-k08",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Rotary values with un-rotated readout'",
+  "node": "attn_rope_norm"
+ },
+ "prompt_chars": 29870,
+ "raw": {
+  "duration_api_ms": 57460,
+  "stop_reason": "end_turn",
+  "session_id": "0e4e6e87-8124-43a0-9d9f-789dfd861135",
+  "total_cost_usd": 0.20996959999999998,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13146,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 5224,
+   "output_tokens_details": {
+    "thinking_tokens": 2747
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13146,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 5224,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 13146,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13146
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 5224,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 13146,
+    "webSearchRequests": 0,
+    "costUSD": 0.20996959999999998,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 2747,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 57571,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 5224,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13146,
+    "total_tokens": 19940
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 5224,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13146,
+    "total_tokens": 19940
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,11 @@
+15:18:31 waiting for the first quick test to finish
+16:53:31 GPU free; starting
+17:06:34 single_mix_init2: {"steps": 300, "last50": 5.1588, "at100": 6.1055, "step_s": 2.61, "params_nonembed": 21242304, "vram": 3.12, "error": null}
+17:20:02 single_gated_latent: {"steps": 300, "last50": 5.1577, "at100": 6.1154, "step_s": 2.7, "params_nonembed": 21832128, "vram": 3.17, "error": null}
+17:32:09 single_hard_reads: {"steps": 300, "last50": 5.1441, "at100": 6.0965, "step_s": 2.42, "params_nonembed": 21242208, "vram": 3.05, "error": null}
+17:46:10 single_write_ratio: {"steps": 300, "last50": 5.2033, "at100": 6.1697, "step_s": 2.8, "params_nonembed": 21242316, "vram": 3.14, "error": null}
+17:46:10 gap vs single_mix_init2: single_mix_init2 +0.0000
+17:46:10 gap vs single_mix_init2: single_gated_latent -0.0011
+17:46:10 gap vs single_mix_init2: single_hard_reads -0.0147
+17:46:10 gap vs single_mix_init2: single_write_ratio +0.0445
+17:46:10 done

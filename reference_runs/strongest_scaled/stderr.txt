@@ -1,0 +1,2 @@
+D:\AGI-lab\.venv\Lib\site-packages\torch\nn\functional.py:2954: UserWarning: Mismatch dtype between input and weight: input dtype = struct c10::BFloat16, weight dtype = float, Cannot dispatch to fused implementation. (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\aten\src\ATen\native\layer_norm.cpp:347.)
+  return torch.rms_norm(input, normalized_shape, weight, eps)

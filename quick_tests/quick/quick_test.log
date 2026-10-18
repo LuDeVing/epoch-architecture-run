@@ -1,0 +1,13 @@
+15:09:50 waiting for the safe model's seed to finish
+15:52:50 GPU free; starting
+16:06:12 strongest_scaled_v2: {"steps": 300, "last50": 5.1507, "at100": 6.1059, "step_s": 2.67, "params_nonembed": 21242304, "vram": 3.12, "error": null}
+16:18:45 unsafe_narrow_keys: {"steps": 300, "last50": 5.1283, "at100": 6.0896, "step_s": 2.51, "params_nonembed": 21241536, "vram": 3.02, "error": null}
+16:26:26 unsafe_one_stream_13: {"steps": 300, "last50": 5.1844, "at100": 6.1163, "step_s": 1.53, "params_nonembed": 23011840, "vram": 2.7, "error": null}
+16:39:21 unsafe_delay_line: {"steps": 300, "last50": 5.086, "at100": 6.0259, "step_s": 2.58, "params_nonembed": 21242304, "vram": 3.12, "error": null}
+16:52:57 unsafe_unigram_prior: {"steps": 300, "last50": 5.1716, "at100": 6.0877, "step_s": 2.72, "params_nonembed": 21242304, "vram": 3.53, "error": null}
+16:52:57 gap vs strongest_scaled_v2: strongest_scaled_v2 +0.0000
+16:52:57 gap vs strongest_scaled_v2: unsafe_narrow_keys -0.0224
+16:52:57 gap vs strongest_scaled_v2: unsafe_one_stream_13 +0.0337
+16:52:57 gap vs strongest_scaled_v2: unsafe_delay_line -0.0647
+16:52:57 gap vs strongest_scaled_v2: unsafe_unigram_prior +0.0209
+16:52:57 done

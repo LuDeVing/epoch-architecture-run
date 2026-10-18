@@ -1,0 +1,110 @@
+{
+ "call_id": "c1ec30a47d0",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "CHAIN:\nL1: Head gets a per-token bias b initialised to counted log-unigram, kept out of weight decay -> the frequency prior is in the logits from step 0 instead of being learned through row geometry | quantity: training loss at matched steps 1–26 | baseline: 10.88 at step 1, 7.06 at step 26 | expect: down 1–3 nats at steps 1–10, down 0.03–0.3 at step 26; a zero-init learned bias gives under 0.05 at step 26 | breaks if: counted-init gap at step 26 is under 0.02 nats\nL2: Bias carries the prior -> rows stop sharing a common \"push-down\" direction | quantity: cosine of each output row to the mean output row (anisotropy), and ‖mean row‖ / mean ‖row‖ | baseline: unmeasured | expect: down by 20–60% relative at step 100 | breaks if: anisotropy at step 100 is within 10% of baseline\nL3: Rows normalised in the head -> the output gradient has no radial component, so row norm is set only by the input lookup and decay | quantity: Spearman correlation of row norm with log train frequency | baseline: unmeasured (belief: strongly positive) | expect: falls toward 0 to 0.3 | breaks if: correlation stays above 0.5 at step 100\nL4: Input rows no longer carry the output prior -> early layers get cleaner token features, so mid-frequency conditional prediction improves beyond what bias alone gives | quantity: loss on rank 100–1000 and 1000–10000 bands, compared with the bias-only variant | baseline: 6.829 / 8.979 at step 100 | expect: down 0.01–0.1 compared with bias-only | breaks if: direction-only minus bias-only is above −0.005 on both bands over 3 seeds\nL5: Early gain persists through 1525 steps -> exam loss falls | quantity: training loss at steps 1000–1525 and exam val loss | baseline: unmeasured here | expect: down 0.005–0.03 nats | breaks if: the matched training-loss gap over the last 300 steps is under 0.005\nWEAKEST: L4 (it is the only link that separates normalisation from a plain bias). L5 is a close second, because prior-type gains usually front-load.\n\nQUESTIONS:\nQ1: With zero-init log-scale s and RMS-normalised rows, what is the initial logit scale? | decides: s init = log(0.02) ≈ −3.91 vs s = 0\nA1: RMS-normalised rows have RMS 1, which is 50x the baseline row RMS of 0.02. Logit std becomes about √384 ≈ 19.6 instead of 0.39, and the output gradient into the tied table is also amplified 50x. Zero-init therefore starts at a loss of tens of nats and makes the output side dominate even more, the opposite of the intent. Initialise s = log(0.02) so the head equals the baseline head at step 0, or equivalently L2-normalise and set s = log(0.392).\n\nQ2: Can a zero-init learned bias absorb the unigram prior \"within the first few hundred steps\" under AdamW lr 3e-3? | decides: zero-init learned b vs b initialised to counted log-unigram\nA2: No. Adam moves each element by roughly the learning rate or less per step. That is at most about 0.9 nats by step 300 and about 3.5–4.5 nats over the whole schedule. The log-prior spans more than 10 nats between frequent and rank-10k+ tokens. The prediction in the idea cannot happen with zero init, so take the counted-init variant.\n\nQ3: Should s and b be in the AdamW group with weight_decay = 0.1? | decides: the existing `other` group vs a new no-decay group\nA3: Decoupled decay costs lr·wd = 3e-4 per step times the value. For b ≈ −10 that is 3e-3 per step toward 0, the same size as the Adam step, and it erases roughly a third of the prior over the run. Decay on s pulls it toward exp(0) = 1, which is a 50x temperature. Put both in a no-decay AdamW group.\n\nQ4: How should the per-token scale and bias be applied without breaking C4? | decides: fold into the weight (`W = E * (exp(s) / rms_row(E))[:, None]`, then `F.linear(h, W, b)`) vs elementwise scale/add on the logits\nA4: Logits are 4096×50304 in bf16, about 412 MB. Any elementwise operation on them saves at least one more such tensor for backward, which is far beyond the roughly 0.1 GB headroom. Folding adds one 50304×384 bf16 tensor (38.6 MB) plus row statistics. The bias rides in the addmm, so no extra logits-sized tensor is created.\n\nQ5: Does normalisation beyond the bias change anything the optimiser sees? | decides: RMS-normalised direction-only head plus s and b vs bias-only\nA5: The output gradient to a raw row becomes (exp(s)/rms)·(I − êêᵀ)g. The radial part is removed exactly, and the tangential part shrinks as rows grow above their initial norm. Under per-element Adam normalisation, magnitudes are partly washed out, so the main surviving effect is the loss of the radial push. Whether that lowers loss is unknown, and it is what the bias-only arm tests.\n\nQ6: Is \"rare-token loss down\" the right target? | decides: rank-10k+ band loss vs total loss plus the 100–10000 bands as the success signal\nA6: At step 100 the rank-10k+ band sits at 11.6 nats, already above uniform (10.83), so the model is already charging roughly a prior cost there. A correct unigram prior gives rank-10k+ tokens their unigram code length, which is plausibly 12–15 nats (belief). That can raise rare-band loss while lowering total loss. Judge on total loss and the mid bands, and only report the rare band.\n\nQ7: Where are the counts computed? | decides: inside GPT.__init__ vs in main after the --build-only return\nA7: The exam runs GPT(cfg) and then load_state_dict, so counting inside __init__ would read data at exam time and break --build-only. Count in main after the build-only return:\n- Source: `train.data[0]` with `np.bincount(..., minlength=50304)`.\n- Smoothing: add-one. The 47 padding ids then get finite, very negative values; avoid −inf in bf16.\n- Store with `b.copy_(log p)`. Because b is a Parameter, the exam sees it.\n\nNever touch val.bin.\n\nQ8: Is the steps 30–45 kill window meaningful? | decides: kill on steps 30–45 vs kill on a matched window at about steps 250–300\nA8: Baseline is already at 7.06 by step 26, likely at or below unigram entropy (belief: about 7.3–7.6 nats for GPT-2 BPE on FineWeb-Edu). So steps 30–45 already test whether the head start survives into the bigram phase. However, the 0.02 bar is 4x the C7 margin, and early prior gains routinely fade. Keep 30–45 as the first gate and add a 300-step matched check before any full run. Matched seeds give identical data order, because the Shards RNG is independent of the model.\n\nQ9: Does the bias interact with global grad clipping at 1.0? | decides: include s and b in clip_grad_norm_ vs clip them separately or exclude them\nA9: Unknown magnitude. The bias gradient is mean(p − onehot) over 32k tokens. Its norm is up to about 1 when the prior is wrong and small when it is counted. With counted init it should rarely trigger clipping. Log the pre-clip global norm in both arms.\n\nQ10: Does the tied head's self-logit (the token scoring itself through its own embedding in the residual) get worse? | decides: plain readout vs readout that subtracts tok(idx)\nA10: Sinkhorn mixing is doubly stochastic, so the mean over streams preserves the input exactly: the readout always contains e_x plus the branch writes. With s = log(rms0), the self-logit at init equals baseline (about 7.7). Later, as raw rows grow on the input side but not in the head, the ratio drifts in an unmeasured direction. Measure the logit of the current token in both arms.\n\nKNOWN:\n- The head is `nn.Linear` with weight tied to `tok.weight`, applied to `self.norm(x.mean(dim=2))`. Logits stay bf16 under autocast and the loss is plain F.cross_entropy. [script]\n- `param_counts` subtracts only `tok.weight`, so s and b (2 × 50304 = 100,608) count as non-embedding: 21.24M → about 21.34M, cap about 23.36M. A frozen buffer would not count. [script]\n- `named_parameters` dedupes the tie, so only `tok.weight` appears; it goes to AdamW (lr 3e-3, wd 0.1, betas 0.9/0.95). New 1-D vectors fall to AdamW too, but need their own wd = 0 group. [script]\n- Steps = 50e6 / 32768 = 1525; accum = 8 micro-batches of 4×1024; warmup 2%, cooldown 30%. [script]\n- Initial row RMS is 0.02 and RMSNorm output RMS is 1. Initialise s = log(0.02) for RMS-normalised rows so step-0 logits match baseline. [script]\n- Logits tensor per micro-batch is 4096×50304 bf16 ≈ 412 MB. Never add a logits-sized elementwise op; fold s into the weight and b into F.linear. [script]\n- The exam builds GPT(cfg) and loads `state_dict`. The prior must be a Parameter or persistent buffer filled in main before training, never computed in `__init__`. [script]\n- Mean over Sinkhorn-mixed streams preserves the input, so the readout always contains exactly e_x plus branch writes. [script]\n- At step 100, the rank-10k+ band is 11.613 nats on 12% of tokens; the rank 0–100 band is 3.163 on 42%; step-26 loss is 7.06. [measured]\n- Layer-0 gradient is anomalously high (attn 0.24–0.29, about 10x layer 1) on 3 seeds. It is a possible readout of input-side pressure; watch it in both arms. [measured]\n- Tied matrices end up output-shaped: mean cosine 0.72 to the untied output matrix vs 0.53 to the input matrix (OLMo-1B scale) https://arxiv.org/pdf/2603.26663 [web]\n- Centering and z-loss leave final loss unchanged (3.05 at 221M) and only reduce LR sensitivity https://arxiv.org/html/2601.02031v1 [web]\n- The extra cost per micro-batch is one row-RMS plus one scale on 19.3M elements, under 1% of the head matmul. [belief]\n\nASSUMES:\n- The token-frequency prior is additive in log space and unconditional.\n- In the baseline, row norm actually encodes output frequency (unmeasured).\n- Tying is kept and the input lookup keeps raw, un-normalised rows.\n- A per-token scale is worth having on top of a per-token bias.\n- AdamW lr 3e-3 is an appropriate rate for the new vectors.\n- An early head start persists to step 1525.\n- The final RMSNorm and the mean-of-streams readout stay as they are.\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Embedding-to-readout bigram skip\nMECHANISM: Drop \"the prior is unconditional\". Add `E[x_t] @ W_b` (one 384×384 matrix under Muon, zero-init) to the normed readout vector before the tied head, giving a direct low-rank bigram path that does not pass through 12 blocks.\nPREDICTION: Lower loss on rank 100–10000 tokens by step 100, and lower layer-0 gradient pressure.\nTEST: 100 matched steps against baseline; compare the bands and the layer-0 gradient.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nSLOT: strengthen\nIDEA: Direction-only on both sides\nMECHANISM: Normalise rows on the input lookup as well, with a separate learned per-token input gain (50304 scalars) alongside the output scale and counted bias, so the shared matrix stores only direction.\nPREDICTION: Row norm becomes meaningless, and the direction-only arm beats the output-only arm on the mid bands by more than 0.005.\nTEST: 45-step matched run with three arms: output-only, both sides, and bias-only.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: leap\nBREAKS: The embedding row norm sets the input's share of the residual stream.\nKILL: Steps 30–45 mean loss not below the output-only arm by at least 0.005.\n\nSLOT: specialise\nIDEA: Counted prior as a decaying crutch\nMECHANISM: b = (1 − step/300)·log p for the first 300 steps and zero after, with no learned bias, so the prior only speeds the unigram phase and the final model has a plain tied head.\nPREDICTION: The early gap matches the full prior and then shrinks; this tells whether the gain is phase-only.\nTEST: Matched run to step 400; compare against the persistent-prior arm.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nSLOT: port\nIDEA: Row-normalised embedding updates\nMECHANISM: In the optimiser, rescale each `tok.weight` row's Adam update to a fixed RMS, so rare rows that get small, consistent gradients move at the same per-row rate as frequent rows.\nPREDICTION: Lower rank 1000–10000 band loss at step 100.\nTEST: 100 matched steps against baseline.\nSOURCE: own\nPART: Optimizer\nKIND: port\n\nSLOT: combine\nIDEA: Counted bias plus μ-centering of output directions\nMECHANISM: Combine the counted bias and direction-only head with μ-centering: subtract the mean normalised row after each step, so the common push-down direction the bias now carries cannot reappear in the rows.\nPREDICTION: Anisotropy near 0 with no loss cost, and a slightly larger gain on the mid bands.\nTEST: 45-step matched run against the direction-only arm.\nSOURCE: https://arxiv.org/html/2601.02031v1\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nSLOT: other\nIDEA: Readout without the input token\nMECHANISM: Because the stream mean contains exactly e_x, read out `norm(x.mean(2) − tok(idx))`. The tied head then never scores the current token by its own embedding and only sees what the blocks wrote.\nPREDICTION: The current token's own logit drops toward the mean, and repetition errors fall. Loss either drops a little or rises if the blocks relied on the copy.\nTEST: 45-step matched run against baseline.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: leap\nBREAKS: The readout sees the full residual stream, including the input embedding.\nKILL: Steps 30–45 mean loss more than 0.01 above baseline.\n\nOPEN:\n- Does the baseline row norm actually correlate with log frequency at step 100? | build: yes | decides: per-token scale s included vs bias-only head\n- What is the unigram entropy of FineWeb-Edu under GPT-2 BPE (for example 7.3 vs 7.6 nats)? | build: no | decides: kill window at steps 30–45 vs a later window\n- What is the matched-seed noise of a 15-step mean loss across seeds, and can a 0.005 bias-only margin be resolved with 3 seeds? | build: yes | decides: kill on steps 30–45 vs a 300-step window\n- Should the bias be learnable after the counted init, or frozen as a buffer? | build: yes | decides: Parameter (counts toward C3) vs persistent buffer\n- RMS vs L2 normalisation with matched s init: is there any difference beyond a constant? | build: no | decides: `F.rms_norm` rows vs `F.normalize` rows\n- Does the self-logit of the current token drift after decoupling? | build: yes | decides: plain readout vs readout minus tok(idx)\n- Does a one-shard count differ meaningfully from a full-train count for rank-10k+ tokens? | build: yes | decides: count from `data[0]` only vs from all shards (cost: startup seconds)",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 16269,
+  "cache_read_input_tokens": 649,
+  "cache_creation_input_tokens": 18052,
+  "total_tokens": 34972
+ },
+ "cost_usd": 1.559654,
+ "duration_ms": 171461,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 34972,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "io_embed_head-in-k01",
+  "seed": "",
+  "note": "interrogating 'Per-token scale and bias decoupling norm from direction' gen 0 depth 0",
+  "node": "io_embed_head",
+  "depth": 0,
+  "gen": 0
+ },
+ "prompt_chars": 40174,
+ "raw": {
+  "duration_api_ms": 169715,
+  "stop_reason": "end_turn",
+  "session_id": "89a5ec39-7515-498d-84e7-4eaf74efde5c",
+  "total_cost_usd": 0.4699338,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 18052,
+   "cache_read_input_tokens": 649,
+   "output_tokens": 16269,
+   "output_tokens_details": {
+    "thinking_tokens": 10552
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 18052,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 16269,
+     "cache_read_input_tokens": 649,
+     "cache_creation_input_tokens": 18052,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 18052
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 16269,
+    "cacheReadInputTokens": 649,
+    "cacheCreationInputTokens": 18052,
+    "webSearchRequests": 0,
+    "costUSD": 0.4699338,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 10552,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 169878,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 16269,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 18052,
+    "total_tokens": 34972
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 16269,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 18052,
+    "total_tokens": 34972
+   },
+   "source": "usage"
+  }
+ }
+}

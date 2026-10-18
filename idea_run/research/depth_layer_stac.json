@@ -1,0 +1,137 @@
+{
+ "node": "depth_layer_stac",
+ "ts": "2026-10-15T01:16:19",
+ "queries": [
+  "modded-nanogpt speedrun record log value embeddings skip connections U-net layers",
+  "looped transformer layer sharing small language model depth recurrence parameter-matched 2025",
+  "DenseFormer depth-weighted average OR DenseNet-style cross-layer connections language model arXiv",
+  "Mixture-of-Depths OR layer skipping OR early exit token-level adaptive compute small LM results",
+  "depth vs width tradeoff small language models optimal aspect ratio layers 2025 arXiv",
+  "Kimi Attention Residuals depth-wise attention over previous layers",
+  "MUDDFormer multiway dynamic dense connections OR DeepCrossAttention OR value residual learning ResFormer",
+  "Mixture-of-Recursions efficient adaptive computation parameter sharing results 135M"
+ ],
+ "known": [
+  {
+   "name": "DenseFormer (depth-weighted averaging)",
+   "mechanism": "After each block, the model takes a learned weighted average of the current output and all earlier block outputs, so later layers can read earlier states directly.",
+   "effect": "Lower perplexity at the same parameter count, with only a few thousand added parameters. It reaches the perplexity of deeper transformers with less data. Learned weights show structured reuse of distant layers.",
+   "where": "Language models up to roughly the 100B-token scale (NeurIPS 2024)",
+   "url": "https://arxiv.org/abs/2402.02622"
+  },
+  {
+   "name": "MUDDFormer (multiway dynamic dense connections)",
+   "mechanism": "Dense cross-layer connections whose weights are computed from the hidden state at each position, with separate connections for the query, key, value and residual inputs of each block.",
+   "effect": "Matches Transformers trained with 1.8x–2.4x compute. MUDDPythia-2.8B matches Pythia-6.9B in pretraining perplexity and downstream tasks, with a small parameter and compute overhead.",
+   "where": "Pythia-style models up to 2.8B (ICML 2025)",
+   "url": "https://arxiv.org/pdf/2502.12170"
+  },
+  {
+   "name": "Attention Residuals (Kimi, AttnRes / Block AttnRes)",
+   "mechanism": "Each layer replaces the fixed unit-weight residual sum with softmax attention over earlier layer outputs, using a learned pseudo-query per layer and RMSNorm on the keys. The block variant groups layers to cut memory.",
+   "effect": "Reported to reduce PreNorm dilution and give more uniform output magnitudes and gradients across depth. Downstream tasks improved across the board, and scaling-law experiments reportedly show the gain holds across sizes.",
+   "where": "Kimi Linear 48B total / 3B active, 1.4T tokens, plus scaling-law runs",
+   "url": "https://arxiv.org/pdf/2603.15031.pdf"
+  },
+  {
+   "name": "Value Residual Learning (ResFormer / SVFormer)",
+   "mechanism": "Each layer's value vectors get a residual connection to the first layer's values, so deep layers keep token-level information. SVFormer instead shares the first layer's values across all layers.",
+   "effect": "ResFormer reaches equal validation loss with 13–16% fewer parameters and 15–20% less data; the figures differ between paper versions. SVFormer cuts the KV cache by nearly half with a small penalty.",
+   "where": "Language-model pretraining (ACL 2025)",
+   "url": "https://arxiv.org/pdf/2410.17897"
+  },
+  {
+   "name": "modded-nanogpt U-Net skips and value embeddings",
+   "mechanism": "Skip connections from the embedding to every block and from block 3 to block 6. Extra token-embedding tables are mixed into attention values, with the skip weights gated by a sigmoid.",
+   "effect": "U-Net skips with a doubled learning rate are record #8–#10 (7.2 min). Value embeddings take the record to 4.41 min, then 3.95 min with U-Net-pattern placement, then 3.57 min once split and sparsified. A write-up says the sigmoid gate, initialised near 0.18, trades slower early training for better final loss.",
+   "where": "GPT-2-small-scale speedrun, with loss targeted at 3.28 on FineWeb",
+   "url": "https://arxiv.org/pdf/2506.22419"
+  },
+  {
+   "name": "Mixture-of-Recursions (MoR)",
+   "mechanism": "Recursive blocks with shared weights, plus a per-token router that picks how many recursions each token gets. Attention and KV cache cover only the tokens still active at each depth.",
+   "effect": "At equal training compute and smaller model sizes, it gives lower validation perplexity and better few-shot accuracy than vanilla and recursive baselines, with higher throughput. The abstract describes this as a new Pareto frontier.",
+   "where": "135M to 1.7B parameters (NeurIPS 2025)",
+   "url": "https://arxiv.org/abs/2507.10524"
+  },
+  {
+   "name": "Relaxed Recursive Transformers (shared layers plus layer-wise LoRA)",
+   "mechanism": "Layers are tied into a looped block, and per-loop low-rank adapters restore layer specialization.",
+   "effect": "Recursive Gemma 1B outperforms similar-sized vanilla pretrained models such as TinyLlama 1.1B and Pythia 1B. The authors estimate 2–3x throughput gains, which comes from analysis rather than measurement.",
+   "where": "Gemma 1B, converted from a pretrained model (ICLR 2025)",
+   "url": "https://arxiv.org/abs/2410.20672v2"
+  },
+  {
+   "name": "Looped GPT-BERT (depth-wise sharing for tiny models)",
+   "mechanism": "Four physical layers are applied over twelve recurrent passes to trade parameters for compute.",
+   "effect": "A 12.18M-parameter model scored comparably on BLiMP and GLUE to public 10M GPT-2 and GPT-BERT baselines with fewer parameters, and extra loops improved training. The abstract reports weaker results on some tasks and gives no parameter-matched comparison.",
+   "where": "BabyLM 2026 Strict-small, 7.48M words",
+   "url": "https://arxiv.org/abs/2609.09691"
+  },
+  {
+   "name": "Parallel attention+MLP blocks (PaLM-style)",
+   "mechanism": "Attention and MLP read the same normalised input and their outputs are summed, instead of running in sequence.",
+   "effect": "About 15% faster training at large scale. PaLM ablations found a small quality loss at 8B and none at 62B.",
+   "where": "PaLM 8B and 62B",
+   "url": "https://erogol.substack.com/p/paper-check-softpick-canon-layers"
+  },
+  {
+   "name": "Depth–width scaling for small models (Nemotron-Flash)",
+   "mechanism": "Extends scaling laws to loss as a function of both depth and width, so the depth/width ratio can be chosen from profiled configurations.",
+   "effect": "Deep-thin models are parameter-efficient but give a worse latency–accuracy trade-off, and the best ratio depends on the latency target.",
+   "where": "Llama-style models with 6–30 blocks, 100B tokens",
+   "url": "https://arxiv.org/abs/2511.18890"
+  }
+ ],
+ "failed": [
+  {
+   "name": "Token-level routing for Mixture-of-Depths and early exit",
+   "why": "Per-token skipping from hidden states is hard to learn, and routers or early exit are reported as unstable to train. Early exit also leaves missing KV entries in deeper layers. Smooth learned gates (GateSkip) fine-tune more stably on pretrained models.",
+   "url": "https://arxiv.org/html/2510.13876v3"
+  },
+  {
+   "name": "Early exit versus layer removal in dynamic layer selection",
+   "why": "Early exit did worse than skipping layers, and per-token skip decisions from hidden states were hard. Only an oracle that allocates depth per sequence matched the full model, using about 23% of layers.",
+   "url": "https://neurips.cc/virtual/2024/106468"
+  },
+  {
+   "name": "Very deep stacks (Depth Delusion / Curse of Depth)",
+   "why": "Pre-LN variance growth makes deep layers near-identity, so they add little and prune easily. One preprint reports a 64-layer 6.4B model losing to a 32-layer 6.9B model by 0.12 nats at 7B. This weakens any plan to buy quality with depth at fixed parameters.",
+   "url": "https://arxiv.org/pdf/2601.20994"
+  },
+  {
+   "name": "Heavy weight sharing with few physical layers",
+   "why": "Looped GPT-BERT reports weaker results on some tasks because few physical layers limit representational capacity.",
+   "url": "https://arxiv.org/abs/2609.09691"
+  }
+ ],
+ "open": [
+  {
+   "direction": "Parallel attention+MLP in only some layers, with the heterogeneous layout chosen by the Curse-of-Depth redundancy profile",
+   "why": "The search found no work testing whether parallel blocks change depth redundancy, or whether using them only in later layers helps. Existing parallel-block evidence comes from large models, not 20M-scale ones.",
+   "url": "https://arxiv.org/html/2502.05795v3"
+  },
+  {
+   "direction": "Block AttnRes or dynamic dense connections combined with four-stream residual mixing",
+   "why": "Attention Residuals and MUDDFormer were tested on plain residual streams. How they interact with multi-stream mixing is unreported, and the cost at 12 layers is unknown.",
+   "url": "https://arxiv.org/pdf/2603.15031.pdf"
+  },
+  {
+   "direction": "Parameter-matched fewer-unique-layers with loops and per-loop adapters at roughly 20M parameters",
+   "why": "MoR started at 135M, and Looped GPT-BERT lacks a parameter-matched comparison. Nobody has measured the trade between shared depth and wider layers at about 20M parameters with an embedding-dominated budget.",
+   "url": "https://arxiv.org/abs/2507.10524"
+  },
+  {
+   "direction": "Depth/width re-optimisation at fixed parameters and tokens for tiny models",
+   "why": "The Nemotron-Flash scaling law starts at 6 blocks and uses 100B tokens. The optimum at 50M tokens and 21M parameters, with latent attention and mixed residuals, is unmeasured.",
+   "url": "https://arxiv.org/abs/2511.18890"
+  },
+  {
+   "direction": "Smooth per-token gating of attention and MLP branches during pretraining for adaptive depth",
+   "why": "GateSkip-style residual gates were shown only as fine-tuning on pretrained models. Whether the same gates help during pretraining of a small model is untested.",
+   "url": "https://arxiv.org/html/2510.13876v3"
+  }
+ ],
+ "backend": "cli_json",
+ "source": "web"
+}

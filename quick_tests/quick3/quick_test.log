@@ -1,0 +1,11 @@
+18:05:38 waiting for the two-winner full run to finish
+18:51:38 GPU free; starting
+19:04:35 r3_delay_signed: {"steps": 300, "last50": 5.0702, "at100": 5.9821, "step_s": 2.59, "params_nonembed": 21242304, "vram": 3.12, "error": null}
+19:18:58 r3_depth_buckets: {"steps": 300, "last50": 5.0838, "at100": 6.0139, "step_s": 2.87, "params_nonembed": 21242304, "vram": 3.12, "error": null}
+19:34:16 r3_query_latent: {"steps": 300, "last50": 5.1482, "at100": 6.1071, "step_s": 3.06, "params_nonembed": 22421952, "vram": 3.15, "error": null}
+19:46:58 r3_zero_out: {"steps": 300, "last50": 5.1443, "at100": 6.1179, "step_s": 2.54, "params_nonembed": 21242304, "vram": 3.12, "error": null}
+19:46:58 gap vs r3_delay_signed: r3_delay_signed +0.0000
+19:46:58 gap vs r3_delay_signed: r3_depth_buckets +0.0136
+19:46:58 gap vs r3_delay_signed: r3_query_latent +0.0780
+19:46:58 gap vs r3_delay_signed: r3_zero_out +0.0741
+19:46:58 done

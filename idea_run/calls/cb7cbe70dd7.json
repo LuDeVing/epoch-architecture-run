@@ -1,0 +1,110 @@
+{
+ "call_id": "cb7cbe70dd7",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "# Have induction heads formed by 1.5M or 3.3M tokens at this scale?\n\nAlmost certainly not by 1.5M tokens, and very probably not by 3.3M. That makes the 45-step kill check unable to test the mechanism. The cheapest way to settle it is a repeated-random-token probe on baseline checkpoints.\n\nQUESTIONS, aimed at the weakest links first.\n\nQ1: Which training steps do 1.5M and 3.3M tokens correspond to, and where do they sit in the LR schedule? | decides: kill check at step 45 vs a later kill check (≥ step 300)\nA1: With `batch_tokens` 32768 there are 1525 total steps. Step 45 is 1.47M tokens and step 100 is 3.28M. Warmup ends at step 30 (`int(1525·0.02)`), so by step 45 the model has had only about 15 steps at full learning rate. Both checkpoints sit at 3–7% of the run.\n\nQ2: Does the measured recall-token gap at step 100 (4.475 vs 6.704) show that induction heads exist? | decides: recall metric = \"bigram already seen in window\" split vs a repeated-random-token in-context score\nA2: No. The split is confounded. Recall targets lean toward frequent tokens and repeated phrases. They can also be lowered by a skip-trigram head that boosts \"any earlier token in the window\", which is not induction. Without a frequency-matched control, the 2.2-nat gap does not show prefix-matching.\n\nQ3: What does published work say about when induction heads form? | decides: kill check at step 45/100 vs a check placed after a measured formation step\nA3: Olsson et al. find a sharp phase change in small models early in training, at roughly 2.5–5B tokens (https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html). That is about 1000× more than 3.3M tokens. Their setup used Adam and a different schedule. Muon-trained speedrun models learn much faster per token, but I know of no published measurement putting natural-text induction formation below about 10M tokens. For this exact configuration the answer is unknown.\n\nQ4: Is the model's loss at step 45/100 in the regime where induction usually appears? | decides: kill check at step 45/100 vs at a loss threshold (e.g. first step with total loss < 4.5)\nA4: The mixed loss at step 100 is 0.13·4.475 + 0.87·6.704 ≈ 6.41 nats. That is near unigram-level prediction; GPT-2 BPE unigram entropy on web text is roughly 7.3–7.5 nats (my estimate, unchecked). Induction emerges after bigram statistics are learned, at far lower loss. At step 45 the loss is higher still, so the model is still in the unigram/bigram phase.\n\nQ5: Does the precondition exist: a sharp previous-token head in an early layer? | decides: rotate the fast frequencies (k=0..15 over the 32 dims) vs only the slow band (16 dims, k=8..15)\nA5: The measured layer-0 entropy is 0.957 and the minimum across layers is 0.667. Neither is a sharp δ=1 head. Telling δ=1 from δ=2 in the shared 32-dim rotary key needs the fast frequencies. The step at which those entropies were measured is not in the brief, which leaves this unknown. If they were measured at step 100, the previous-token head that K-composition needs has not formed, so induction cannot have formed either.\n\nQ6: Before induction forms, does the value rotation cost capacity? | decides: rotate from step 0 vs rotate only after the attention sharpens (ramp or delayed switch)\nA6: Yes, this is the expected outcome. With near-uniform attention over T positions, |Σ a_ij e^{iωδ}| ≈ 1/(Tω) for fast ω. The fast-frequency rotated dims therefore cancel to almost nothing, and half of each value head is close to dead early on. At step 45 the idea pays its L2 cost and has nothing to gain from L4. The kill rule's \"total loss above baseline\" clause is biased toward a false kill.\n\nQ7: Does an induction head need the offset carried in its value at all? | decides: rotate values in all layers vs only in early layers (1–3), where the offset can feed previous-token / K-composition\nA7: Not for its own prediction. An induction head's value is the copied token's content, and the offset of the attended token does not change what gets copied. A plausible benefit is upstream instead. A diffuse early head whose output encodes the offset in its phase could hand later layers previous-token information, speeding up induction formation. That benefit would show up as an earlier formation step, not as lower recall loss at a fixed step.\n\nQ8: What cheap measurement settles formation at this scale? | decides: 45-step matched smoke vs a checkpoint-sweep probe before any A/B\nA8: Train the baseline once and save `state_dict` at steps 45, 100, 200, 400, 800 and 1525. This is a separate probe script, not the harness file. Feed 8×(256 random tokens repeated twice) and measure the loss drop of the second copy against the first. Also compute the per-head prefix-matching score. Formation is the first step where the in-context drop exceeds about 1 nat and some head scores above 0.3. This costs one baseline run of compute.\n\nQ9: Does this architecture (MLA latent 128, shared rotary key, 4-stream Sinkhorn mixing) delay induction compared with a plain GPT? | decides: keep the shared rotary key vs give each head its own rotary key dims for the test\nA9: Unknown. Two mechanisms could delay it:\n- Every head's key content passes through one 128-dim latent shared by 6 heads × (k and v). Previous-token information must survive that compression to be used in K-composition.\n- The single shared rotary key means all 6 heads see identical positional keys, so per-head positional specialisation comes only from the queries.\n\nQ10: Which frequency band carries offset information inside a 1024 window without cancelling? | decides: rotate `v[..., :32]` with all 16 frequencies vs a 16-dim band using `cos[:, k0:k0+8]`\nA10: The wavelength is 2π·10000^(k/16). For k ≥ 12 it is ≥ 6283 tokens, so the rotation over 1024 tokens stays below about 1 rad: little offset information, but little cancellation. For k ≤ 2 (wavelength < 20) it cancels almost completely under diffuse attention. The useful band is roughly k = 3..10 (about 35–1990 tokens). Because `apply_rope` pairs `x[:d]` with `x[d:]`, a 16-dim band must use the matching 8 columns of `cos`/`sin`.\n\nKNOWN:\n- Total steps 1525, accum 8, warmup 30 steps, cooldown starts at step 1067 [script]\n- Step 45 = 1,474,560 tokens; step 100 = 3,276,800 tokens [script]\n- Mixed train loss at step 100 ≈ 6.41 (recall 4.475 on 13% of targets, rest 6.704) [measured]\n- ln(50304) = 10.83 nats is the uniform-guess loss; at step 100 the model is about 4.4 nats below it [script]\n- Induction phase change in small models falls at about 2.5–5B tokens under Adam https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html [web]\n- Layer-0 attention entropy is 0.957 and the minimum is 0.667 (layer 9); no layer shows a sharp head [measured]\n- `apply_rope` uses half-split pairing; a sub-band rotation must slice `cos`/`sin` to matching columns [script]\n- Rotary frequencies are ω_k = 10000^(−k/16), k = 0..15; k = 3..10 spans wavelengths of about 35–1990 tokens [script]\n- Under uniform attention over T=1024, a rotated pair at frequency ω keeps about 1/(Tω) of its magnitude, so fast bands are near zero early [belief]\n- Induction heads have very probably not formed by step 100 and almost certainly not by step 45 at this scale [belief]\n- The script saves no mid-run checkpoints; a formation sweep needs a separate probe script outside the harness file [script]\n- The layer-0 attention gradient is anomalous (0.29 vs about 0.04); value rotation in layer 0 will change it, so log it [measured]\n\nASSUMES:\n- Induction heads exist by the kill step (45), so recall loss can respond.\n- The \"bigram seen in window\" split measures induction rather than frequency or skip-trigram copying.\n- Offset information in the value helps the token prediction directly, not only by speeding up the formation of other heads.\n- `wo` and the MLP can decode phase-coded offset that is mixed with content across many attended tokens.\n- The rotation is fixed from step 0; the cancellation cost during the diffuse early phase is acceptable.\n- Every layer and every head gets the rotation.\n- Value rotation uses the same frequencies (theta 10000) as the keys.\n- The unrotated half of each value head is enough content capacity.\n\nNEW IDEAS:\n\nSLOT: drop\nIDEA: Explicit expected-offset channel\nMECHANISM: Drop \"offset rides on rotated value dims\". Append one value dim per head holding log(1+j) and subtract log(1+i) from that output dim after SDPA, so each head reports its attention-weighted mean log-position minus its own. This is linear and has no phase cancellation. Feed the 6 extra dims into `wo` (+2304 params per layer).\nPREDICTION: Lower loss than baseline from step 1, unaffected by attention diffuseness; earlier induction formation in the repeated-random-token probe.\nTEST: Formation-step sweep (Q8) on baseline vs this; kill if formation is not earlier by ≥ 20% of steps.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: strengthen\nIDEA: Phase ramp on value rotation\nMECHANISM: Multiply the value-rotation angles by s(t) ramping 0→1 between steps 150 and 450. Early training sees identity values with no cancellation cost; the offset phase appears once attention has sharpened.\nPREDICTION: No loss penalty at step 45/100 relative to baseline; recall-token loss below baseline after step 450.\nTEST: Matched 600-step runs with the recall split and repeated-random probe at step 600.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: leap\nBREAKS: The positional encoding is fixed from step 0 and does not change during training.\nKILL: At step 600, repeated-random in-context gain not ≥ 0.1 nat above baseline, or total loss > baseline + 0.01.\n\nSLOT: specialise\nIDEA: Rotary values only in layers 1–3, mid band\nMECHANISM: Rotate only the k = 3..10 band (16 dims) and only in layers 1–3. The offset-coded output feeds later layers' keys (K-composition) and can stand in for a previous-token head; the low-entropy late layers keep clean values.\nPREDICTION: Induction formation step earlier than baseline; non-recall loss unchanged.\nTEST: Formation sweep at steps 100/200/400 vs baseline, 1 seed each first.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: port\nIDEA: Token-shift on the attention input\nMECHANISM: Mix x_{t−1} into the normed attention input through a learned per-channel gate (RWKV token shift). Previous-token information then exists in layer 0 without a previous-token head, and induction becomes one-layer.\nPREDICTION: Repeated-random in-context gain appears within the first 200 steps; the recall split improves at step 100.\nTEST: 100-step matched smoke plus the repeated-random probe.\nSOURCE: https://github.com/BlinkDL/RWKV-LM\nPART: Input embedding / block input\nKIND: port\n\nSLOT: combine\nIDEA: Rotary values + attention sink\nMECHANISM: Add a learned null key/value per head (softmax off-by-one). Diffuse heads can then park mass on the sink instead of spreading it over many tokens, which reduces phase cancellation in the rotated slice.\nPREDICTION: The L2 ratio (RMS of rotated / unrotated output) rises in layers 0–2 compared with rotation alone.\nTEST: L2 ratio at step 100, rotation vs rotation + sink.\nSOURCE: https://www.evanmiller.org/attention-is-off-by-one.html\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nOPEN:\n- At which step does the baseline form induction heads (repeated-random gain > 1 nat)? | build: yes | decides: kill at step 45 vs at the measured formation step + margin\n- At which step were the layer entropies (0.957–0.667) measured? | build: yes | decides: fast band vs mid band only\n- How much of the recall-token gap remains under a unigram-frequency-matched control? | build: yes | decides: bigram-seen split vs repeated-random probe as TARGET\n- Does the MLA latent (128 shared) delay previous-token head formation compared with standard MHA? | build: yes | decides: shared rotary key vs per-head rotary key for the test\n- Can `wo` decode phase-coded offset when it is superposed with content? | build: yes | decides: rotated dims vs explicit offset channel\n- Does value rotation in layer 0 change the anomalous layer-0 gradient? | build: no | decides: watch-only\n\nLINK STATUS:\n- L1: open | A pure unit test with one-hot attention; not yet run. The algebra holds given half-split pairing and slices of `cos`/`sin` that match.\n- L2: open | Not measured. Under the near-uniform early attention (layer 0 entropy 0.957), fast bands should cancel far below the expected 0.2–0.7 at step 45/100, so the \"≤ 0.3\" refutation zone is likely to be hit early for reasons unrelated to steady state.\n- L3: open | No probe run. At step 45/100 there are probably no sharp heads, so the argmax-offset probe target is ill-defined.\n- L4: open | Induction very probably absent at steps 45/100 (Q3–Q5), and the recall split is confounded (Q2). As specified, the test cannot confirm or refute the link.\n- L5: open | At risk. The early cancellation cost (Q6) predicts a non-recall loss rise at step 45, which would trigger the kill before the mechanism can act.\n- L6: open | Needs full 50M-token runs over ≥ 3 seeds; the pooled baseline mean is not in the brief.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 10959,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 13283,
+  "total_tokens": 25812
+ },
+ "cost_usd": 1.073363,
+ "duration_ms": 116170,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 25812,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "attn_rope_norm-in-k08",
+  "seed": "",
+  "note": "interrogating 'Rotary values with un-rotated readout' gen 0 depth 1: Have induction heads formed by 1.5M or 3.3M tokens at this s",
+  "node": "attn_rope_norm",
+  "depth": 1,
+  "gen": 0
+ },
+ "prompt_chars": 30672,
+ "raw": {
+  "duration_api_ms": 114770,
+  "stop_reason": "end_turn",
+  "session_id": "e955623a-63f0-4be8-8e4a-45a58ee05429",
+  "total_cost_usd": 0.3257656,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13283,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 10959,
+   "output_tokens_details": {
+    "thinking_tokens": 5864
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13283,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 10959,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 13283,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13283
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 10959,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 13283,
+    "webSearchRequests": 0,
+    "costUSD": 0.3257656,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 5864,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 114876,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 10959,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13283,
+    "total_tokens": 25812
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 10959,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13283,
+    "total_tokens": 25812
+   },
+   "source": "usage"
+  }
+ }
+}

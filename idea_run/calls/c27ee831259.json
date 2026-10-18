@@ -1,0 +1,105 @@
+{
+ "call_id": "c27ee831259",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Learned sink key (extra null key)\", \"members\": [\"sf1944d1c91\"]},\n  {\"name\": \"Short causal conv on keys/values\", \"members\": [\"s74de4f18fc\"]},\n  {\"name\": \"Head count/width reallocation\", \"members\": [\"s291d507e0f\", \"s3a7b5fa18c\"]},\n  {\"name\": \"Query-independent key salience bias\", \"members\": [\"scf5d413e2e\"]},\n  {\"name\": \"Query-norm gain-scheduled temperature\", \"members\": [\"sadd597a5c0\"]},\n  {\"name\": \"Value rotation heterodyning\", \"members\": [\"s4fc1b0b612\"]},\n  {\"name\": \"Shared softmax budget across head pairs\", \"members\": [\"s73a6a59cf6\"]},\n  {\"name\": \"Layer-0 decay-kernel bank\", \"members\": [\"sce521b3b1a\"]},\n  {\"name\": \"Shared wo across layers with more heads\", \"members\": [\"sc8c0324288\"]},\n  {\"name\": \"Self-excluded attention mask\", \"members\": [\"s03b519b4c9\"]},\n  {\"name\": \"Static logit scale / per-head temperature\", \"members\": [\"s8e4ef89f6a\", \"s0bf5af4913\"]},\n  {\"name\": \"Log-length scaled softmax (SSMax)\", \"members\": [\"s1eedcccf81\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 1211,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 3616,
+  "total_tokens": 6397
+ },
+ "cost_usd": 0.032201,
+ "duration_ms": 10970,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 6397,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_heads_outpu/inward, 14 sketches"
+ },
+ "prompt_chars": 8521,
+ "raw": {
+  "duration_api_ms": 9573,
+  "stop_reason": "end_turn",
+  "session_id": "98912632-1717-49fc-ad7c-c5ad2eedf9f3",
+  "total_cost_usd": 0.026734800000000003,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 3616,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 1211,
+   "output_tokens_details": {
+    "thinking_tokens": 744
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 3616,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1211,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 3616,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 3616
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 1211,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 3616,
+    "webSearchRequests": 0,
+    "costUSD": 0.026734800000000003,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 744,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 9640,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 1211,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3616,
+    "total_tokens": 6397
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 1211,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3616,
+    "total_tokens": 6397
+   },
+   "source": "usage"
+  }
+ }
+}

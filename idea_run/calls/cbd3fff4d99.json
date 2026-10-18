@@ -1,0 +1,110 @@
+{
+ "call_id": "cbd3fff4d99",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "CHAIN:\nL1: Heads 3–5 use the key of token j−1 with the value of token j, so in one layer they can attend to positions whose predecessor matches the current token | quantity: share of attention mass that heads 3–5 put on \"successor of an earlier copy of token i\" positions, per layer | baseline: unmeasured | expect: up, from chance (<0.05) to >0.2 in at least one layer by step ~300 | breaks if: this share stays near chance in every layer through step 500.\nL2: One-hop induction lowers loss on repeated spans early in training | quantity: recall-token loss (targets whose bigram was already seen in the window) | baseline: 4.475 at step 100 (vs 6.704 for other tokens) | expect: down 0.15–0.3 nats against baseline at matched steps 200–1525 | breaks if: the gap at matched steps is under 0.05 nats.\nL3: Recall gains build up with context length | quantity: loss at 256–1024 minus loss at 0–64 | baseline: +0.459 at step 100 | expect: this difference shrinks against baseline by 0.02–0.1 | breaks if: the late-minus-early difference matches baseline within 0.01.\nL4: Taking 3 of 6 standard heads away in all 12 layers costs nothing on the other 87% of targets | quantity: non-recall token loss | baseline: 6.704 at step 100 | expect: within ±0.01 of baseline | breaks if: it rises by more than ~0.15 × the recall-token gain, which cancels the net effect.\nL5: Net effect on the exam | quantity: exam val loss at 50M tokens | baseline: pooled baseline mean (not in the measurements above) | expect: down 0.01–0.04 | breaks if: the gap is ≤0.005 or one-sided Welch p ≥ 0.01 over 3 seeds.\nWEAKEST: L4, closely followed by L2's size.\n\nQUESTIONS:\nQ1: Is the predicted 0.02–0.04 nats arithmetically reachable through recall tokens alone? | decides: 3 shifted heads per layer vs 1 shifted head per layer (lower cost to L4)\nA1: Recall tokens are 13% of targets (measured). A 0.02 net gain needs about 0.15 nats on them, and 0.04 needs about 0.31 nats, assuming zero cost elsewhere. That is a large recall gain, so the build cannot also afford a 0.01 loss on the other 87% of targets. This argues for logging both groups from the first run.\n\nQ2: How should the shifted key at position 0, which has no predecessor, be filled? | decides: a zero key vs `torch.roll` (or a duplicate of token 0's key)\nA2: `torch.roll` wraps token T−1's key into position 0. That puts future content into a key every query can see, so it is a leak and must not be used. The safe choice is a zero key: `cat([zeros_like(k[:,:,:1]), k[:,:,:-1]], dim=2)`. It gives logit 0, so query 0 attends only to j=0 and reads its own value (no NaN). Watch whether position 0 becomes a sink for heads 3–5; baseline first-token mass is 0.002–0.006.\n\nQ3: Should the whole key be shifted (content plus rotary, post-RoPE), or only the content slice with rotary at j? | decides: shift the final concatenated `k[:, 3:6]` vs shift `self.k_norm(k)` only and keep `kr` at j\nA3: The idea specifies post-RoPE, so shift the whole key. The rotary score then sees relative offset i−j+1, and purely positional heads still work, offset by one. `kr` is a single head expanded to all heads, so the simplest faithful build shifts the final `k` tensor for heads 3:6 after the `torch.cat`. Both variants are causal.\n\nQ4: Can QK-norm logits get sharp enough to pick one matching token out of ~1000? | decides: keep the `q_norm`/`k_norm` weight init at 1 vs raise it (e.g. 2)\nA4: With norm weights at 1, the content logit is at most 8·8/√96 ≈ 6.5 (SDPA scale is 1/√96 because q has 96 dims). Selecting one position among ~1000 needs a gap of about ln(1000) ≈ 6.9. The baseline already grows its max logit to 7.8–22.75 by step 100 (measured), so the norm gains learn this quickly. Keep init 1 for fidelity.\n\nQ5: Does induction even form inside 50M tokens (1525 steps), and when? | decides: trust the 45-step kill vs add a matched 300-step run before the 3-seed run\nA5: Unknown for this recipe. Olsson et al. report the induction phase change in small models at roughly 2.5–5B tokens with large batches (https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html). This setup has a different optimizer, batch and LR, so that does not transfer. At step 45 (1.47M tokens) neither model likely has induction, so the 45-step kill tests only harm, not benefit.\n\nQ6: Which layers should get shifted heads? | decides: heads 3–5 in all 12 layers (as specified) vs only in layers 0–5\nA6: Unknown. The mechanism needs the key to reflect token j−1's identity, which is cleanest in early layers where the residual is close to the embedding. Later layers already mix in neighbour information through standard heads. Build it as specified, but log the L1 attention share per layer so a specialised version can be chosen from data.\n\nQ7: Does it fit C3 and C4? | decides: `cat`-based shift inside `Attention.forward` vs a precomputed index gather\nA7: It adds no parameters, so non-embedding stays at 21.24M. Each layer holds an extra (4,3,1024,96) bf16 tensor, about 2.4 MB, roughly 28 MB across 12 layers; that is negligible against 5.6 GB. SDPA keeps `is_causal=True`, so the fused kernel path is unchanged. A `cat` of a slice should stay within ~1% step time, but measure it in the 3-step timing check.\n\nQ8: Can the exam harness rebuild the shifted model from `model.pt`? | decides: hardcode the shift vs add a Config field (e.g. `shift_heads: int = 3`)\nA8: Unknown how `nano/exam.py` maps the saved config onto `Config`. Hardcoding (heads `n_head//2:` shifted) reproduces the model whatever the harness does with extra keys. A field with a default equal to the new behaviour is also safe if the exam instantiates this file's `Config`.\n\nQ9: Does the layer-0 gradient anomaly (10× attention grad) interact with the shift? | decides: shift in layer 0 vs start shifting at layer 1\nA9: Unknown. Layer 0 is where one-hop induction is most natural, which is an argument for keeping it. Log layer-0 attention grad norm (baseline 0.2406 at step 100) and see whether it moves.\n\nKNOWN:\n- Heads 3–5 means `k[:, 3:6]` in the `(B, H, T, 96)` key tensor after `k = torch.cat([self.k_norm(k), kr.expand(...)], dim=-1)`; values `v` are not touched. [script]\n- `kr` comes from one rotary projection shared by all heads (`self.rotary` → `rd=32`, expanded to `n_head`), so shifting it for heads 3–5 only must act on the expanded tensor. [script]\n- `k_norm` is per-token, so shifting before or after it gives the same result, except for the padded position. [script]\n- `torch.roll` along T leaks token T−1 into position 0's key; pad with zeros instead. [belief]\n- SDPA scale is 1/√96 (q last dim = 64 + 32); the content-logit ceiling at norm weight 1 is about 6.5. [script]\n- Total steps at 50M tokens = 50e6 // 32768 = 1525; the predicted induction window (steps 150–300) is 4.9–9.8M tokens. [script]\n- A 45-step smoke run has its own schedule: warmup is 1 step and cooldown starts at step 31. Baseline and candidate must use the same `--smoke-steps`. [script]\n- Recall tokens are 13% of targets with loss 4.475 vs 6.704 at step 100; late-minus-early position loss is +0.459. [measured]\n- Max attention logit at step 100 is 7.81 (layer 0) to 22.75 (layer 8); first-token attention mass is 0.0023–0.0059. [measured]\n- The leak test should check that logits at positions ≤ i are bit-identical (in fp32) when tokens > i are randomised; include i = 0 and i = T−1. [belief]\n- H3 put a shift SSM on keys specifically so one layer can do associative recall/induction (https://arxiv.org/abs/2212.14052). [web]\n- Primer's depthwise convolution after the Q/K/V projections (a learned local shift) improved LM quality (https://arxiv.org/abs/2109.08668). [web]\n- One-layer attention-only transformers cannot form induction heads without a previous-token mechanism; normally a previous-token head and an induction head span two layers (https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html). [web]\n- No parameter change: non-embedding stays at 21.24M. [script]\n\nASSUMES:\n- Induction/recall is a real bottleneck at 50M tokens for this 12-layer, 21M model.\n- The two-layer previous-token + induction circuit uses capacity that would otherwise go to useful circuits.\n- A hard, fixed one-token shift is the right primitive, not a learned mix of current and previous keys.\n- Half the heads in every layer can lose same-token key/value pairing without hurting non-recall tokens.\n- Matching on a single previous token is precise enough; false matches on frequent tokens do not add noise.\n- The key for position j should come from the same layer's residual at j−1, not from the embedding.\n- The exam's fixed 1024-token windows contain enough within-window repeats (13% recall targets) to show a gain.\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Learned key smear\nMECHANISM: Drop the hard shift. For every head, k'_j = k_j + α_h·k_{j−1}, with a per-head scalar α initialised at 0 (6 params per layer), applied after `k_norm`. Each head chooses how much predecessor identity its keys carry.\nPREDICTION: α grows in a few heads per layer; recall-token loss falls with no cost on non-recall tokens, since the default stays standard attention.\nTEST: 45-step matched smoke run plus per-head α trajectory; kill if α stays below 0.05 everywhere by step 300.\nSOURCE: https://arxiv.org/abs/2109.08668\nPART: Sequence mixing: head count, head structure and output projection\nKIND: port\n\nSLOT: strengthen\nIDEA: Bigram-prefix shifted heads\nMECHANISM: In heads 3–5, content dims 0–31 of the key come from token j−1 and dims 32–63 from token j−2. Query dims 0–31 come from token i and dims 32–63 from token i−1. The head then matches a two-token prefix, which cuts false matches on frequent tokens, with zero parameters.\nPREDICTION: Lower recall-token loss than single-shift heads, especially on rank 0–100 tokens where single-token matches are ambiguous.\nTEST: Matched 300-step run against the single-shift build; compare recall-token loss.\nSOURCE: own\nPART: Sequence mixing: head count, head structure and output projection\nKIND: leap\nBREAKS: Each query and each key belongs to a single token.\nKILL: Mean loss over steps 40–45 more than 0.02 nats above baseline.\n\nSLOT: specialise\nIDEA: One induction head in layers 1–3\nMECHANISM: Shift the key only for head 5 in layers 1, 2 and 3. All other heads stay standard, so 33 of 36 standard-head slots are kept and the L4 cost is small.\nPREDICTION: Most of the recall gain at about one sixth of the capacity cost; non-recall loss within ±0.005 of baseline.\nTEST: Matched 300-step run; recall vs non-recall loss split.\nSOURCE: own\nPART: Sequence mixing: head count, head structure and output projection\nKIND: leap\nBREAKS: The key a query scores and the value it reads belong to the same token.\nKILL: Mean loss over steps 40–45 more than 0.02 nats above baseline.\n\nSLOT: port\nIDEA: Predecessor-gated MLP\nMECHANISM: Half of `w_gate`'s input is the normalised residual of token j−1 (shifted, zero-padded) instead of token j, so the SwiGLU gate is computed from a bigram. Parameters do not change.\nPREDICTION: Lower loss on rank 100–10000 tokens, whose prediction depends on the preceding word, and an earlier drop in the loss curve.\nTEST: 45-step matched smoke run; loss by frequency band.\nSOURCE: own\nPART: Feed-forward (MLP)\nKIND: leap\nBREAKS: The MLP is strictly per-token.\nKILL: Mean loss over steps 40–45 more than 0.02 nats above baseline.\n\nSLOT: combine\nIDEA: Gated shifted heads\nMECHANISM: Keep heads 3–5 shifted and multiply each head's SDPA output by sigmoid(x[:, :12]·W_h), with W_h of shape 12×6 per layer and gates initialised open. Induction heads can then switch themselves off when there is no repeat, which removes false-match noise from non-recall tokens.\nPREDICTION: Same recall gain as the plain shift, with the L4 cost on non-recall tokens near zero.\nTEST: Matched 300-step run against the ungated shift; non-recall token loss.\nSOURCE: https://www.greaterwrong.com/posts/j3gp8tebQiFJqzBgg/how-the-nanogpt-speedrun-wr-dropped-by-20-in-3-months\nPART: Sequence mixing: head count, head structure and output projection\nKIND: port\n\nSLOT: other\nIDEA: Shifted-key pointer logits\nMECHANISM: In the last layer, one shifted-key head's attention distribution over j is scattered onto the vocabulary at token id idx[j]. It is mixed into the softmax with a learned scalar gate, so predicted probability = (1−g)·softmax + g·pointer. This is a copy mechanism that skips the residual stream.\nPREDICTION: A large recall-token gain (>0.3 nats) late in training; no change on other tokens because g learns to be small there.\nTEST: 300-step matched run; recall-token loss and the trajectory of g.\nSOURCE: https://arxiv.org/abs/1609.07843\nPART: Output head\nKIND: leap\nBREAKS: Logits come only from the tied head applied to the final residual.\nKILL: Mean loss over steps 40–45 more than 0.02 nats above baseline, or g < 0.01 at step 300.\n\nOPEN:\n- Does the baseline form induction heads at all within 1525 steps, and at which step? | build: yes | decides: trust the 45-step kill alone vs add a matched 300-step gate before seeds\n- Is the cost on non-recall tokens from losing three standard heads per layer below 0.01 nats? | build: yes | decides: 3 shifted heads per layer vs 1 per layer\n- Which layers' shifted heads actually do induction (the L1 share per layer)? | build: yes | decides: all 12 layers vs early layers only\n- Does the zero-padded key at position 0 become an attention sink for heads 3–5? | build: yes | decides: zero pad vs a learned null key\n- How does `nano/exam.py` rebuild `Config` from `model.pt`? | build: yes | decides: hardcoded shift vs a new Config field\n- What is the seed-to-seed std of the exam val loss? Is a 0.02 gain detectable at p < 0.01 with 3 seeds? | build: no | decides: 3 seeds vs 5 seeds\n- Does the layer-0 attention gradient anomaly change when layer 0's heads 3–5 are shifted? | build: no | decides: include layer 0 vs start at layer 1",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 13912,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 15774,
+  "total_tokens": 31256
+ },
+ "cost_usd": 1.341544,
+ "duration_ms": 150455,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 31256,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "attn_heads_outpu-ou-k00",
+  "seed": "",
+  "note": "interrogating 'Shifted-key one-hop induction' gen 0 depth 0",
+  "node": "attn_heads_outpu",
+  "depth": 0,
+  "gen": 0
+ },
+ "prompt_chars": 36387,
+ "raw": {
+  "duration_api_ms": 149037,
+  "stop_reason": "end_turn",
+  "session_id": "fd9498fb-93d2-45d1-9818-b8a922b8b6ef",
+  "total_cost_usd": 0.40475360000000005,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 15774,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 13912,
+   "output_tokens_details": {
+    "thinking_tokens": 8292
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 15774,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 13912,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 15774,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 15774
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 13912,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 15774,
+    "webSearchRequests": 0,
+    "costUSD": 0.40475360000000005,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 8292,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 149157,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 13912,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 15774,
+    "total_tokens": 31256
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 13912,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 15774,
+    "total_tokens": 31256
+   },
+   "source": "usage"
+  }
+ }
+}

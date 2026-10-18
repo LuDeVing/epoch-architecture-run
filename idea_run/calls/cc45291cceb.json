@@ -1,0 +1,108 @@
+{
+ "call_id": "cc45291cceb",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "OBJECTIONS:\n- The idea says \"RMS-normalized rows\" with a zero-init log-scale, so the scale starts at exp(0)=1. An RMS-normalized row has L2 norm √384≈19.6, and the final `self.norm` output also has norm ≈19.6. Initial logits therefore have std ≈19.6, compared with ≈0.4 in the baseline (rows at std 0.02). Step-1 loss would be tens of nats instead of 10.88, softmax gradients would saturate, and the 30-step warmup would be spent shrinking `norm.weight`. `norm.weight` is under AdamW at lr 3e-3, so it can move only about 3e-3 per step. Cheapest check: print the step-1 loss and the logit std at init; the fix is unit-norm rows, or initializing the log-scale at −log(√d)+log(0.39) | severity: high | class: impl_slip | if_true: learn_z below 0\n- Normalizing the head multiplies AdamW's effective head learning rate by about 1/rms(row)≈50×. Adam's sign-like step is ~3e-3 per element on rows whose elements are ~0.02, so each step rotates a row's output direction by ~15%. Under the tie, the input lookup sees the same rotation. Weight decay shrinks rows by about 0.68× over the run, which raises this amplification further. The baseline's tuned `lr_adam` no longer fits the head, and mid-frequency directions churn instead of settling. Cheapest check: track per-row cosine between step t and t+10, and the loss-curve noise, against baseline | severity: high | class: hidden_cost | if_true: trend above 0\n- A zero-init bias under AdamW at lr 3e-3 with this schedule can move at most about Σlr ≈ 3e-3 × ~1300 effective steps ≈ 4 nats over the whole run. The unigram prior spans roughly 10+ nats between rank-100 and rank-10k tokens. The bias therefore cannot hold the prior within budget. The \"push rare tokens down\" signal goes into the row directions instead: rare rows rotate toward the antipode of the mean hidden state, which recreates the anisotropy the idea is meant to remove. Cheapest check: bias spread (max−min) at step 100, and the anisotropy ‖mean row‖/mean‖row‖ against baseline | severity: high | class: interaction_cancels | if_true: learn_z below 1 | link: L2\n- `build_optimizers` sends every 1-D parameter to AdamW with weight_decay=0.1. That contradicts L1's \"kept out of weight decay\". A counted log-unigram bias would be decayed toward 0 and lose about 30% of its spread by step 1525, so the rows would have to relearn that part of the prior late in training. That is exactly when the cooldown leaves no learning rate to do it. The builder has to add a third param group (wd=0) and probably forgets. Cheapest check: compare bias spread at the end with spread at init | severity: medium | class: impl_slip | if_true: long_z below 2.33 | link: L1\n- Adding the bias or scale after the matmul (`logits * scale.exp() + bias`) creates extra (4096×50304) tensors. Autocast does not cover elementwise ops, so bf16 logits + fp32 bias is promoted to an 0.82 GB fp32 logits tensor that is kept for backward. This is the copy the inline comment warns about, and the stated headroom is 0.1 GB, so it breaks C4 (5.6 GB) or OOMs at micro_batch 4. The scale must be folded into the weight rows and the bias passed through `F.linear(..., bias)` so autocast casts it. Cheapest check: `--smoke-steps 3` peak_vram_gb | severity: high | class: breaks_constraint | if_true: step_ratio above 1.15\n- If the frozen-prior or counted-bias variant computes counts in `GPT.__init__` (or at startup) using a glob like `*.bin`, it picks up `val.bin` whenever it is present. That trips C6. If counts are instead stored as a non-persistent buffer, or the prior is added only inside the `targets is not None` branch, the exam's `GPT(cfg).forward(idx)` runs without the prior and scores far worse than the self-report. Cheapest check: load model.pt into a fresh `GPT(cfg)` with `strict=True`, then compare `forward(idx)` logits against the training-time logits | severity: high | class: impl_slip | if_true: fidelity below 1\n- The headline gain comes from the prior, and that is early-only. Baseline is already at 7.06 at step 26, close to unigram entropy, and the probe's per-10-step gain halves after step 10. A model that gets the prior for free leads at steps 1–100, then the baseline catches up as its rows encode frequency anyway. The KILL test (training loss at steps 30–45) measures exactly the window where the effect exists and says nothing about step 1525 | severity: high | class: early_only | if_true: trend above 0 | link: L5\n- The premise that \"decay shrinks rare rows to zero\" is weak at this budget. AdamW decoupled decay gives a total factor of about exp(−3e-4 × ~1300) ≈ 0.68 on every row equally, not rare-specific. The input side renormalizes anyway: block 0's `n1` RMSNorm sees the 4-stream read of the raw embedding. Later blocks see the embedding only relative to branch writes that grow the stream 7.8×. Decoupling the row norm therefore buys the input pathway almost nothing, so L4's direction-only-over-bias-only margin should be near zero | severity: medium | class: below_noise | if_true: learn_z below 1 | link: L4\n- The output gradient's radial component goes away, but its tangential component still encodes frequency. With exp(s_v) fixed near 1 early, the only way to lower a rare token's logit is to rotate ê_v against typical h. Row direction then correlates with frequency instead of row norm, and the \"clean input features\" of L4 do not arrive. Cheapest check: correlation of cos(ê_v, mean h) with log frequency at step 100 | severity: medium | class: interaction_cancels | if_true: none | link: L3\n- Even if the mechanism works, the predicted 0.005–0.03 nats at the end sits mostly at or below what C7 can detect. The test needs >0.005 above the pooled mean at p<0.01 with a one-sided Welch test over 3 seeds. With seed std around 0.005–0.01, roughly a 0.015+ effect is required. The bias-only variant likely captures most of whatever survives, leaving the normalization itself undetectable | severity: medium | class: below_noise | if_true: long_z below 2.33\n- Rare-token loss (12% of tokens, 11.6 nats) is the stated target, but those tokens are mostly not predictable from context at 50M tokens. A good unigram prior lowers their loss only toward their unigram cost. The baseline reaches that cost too by mid-run, so the exam (the mean over all tokens) moves only if frequent-band conditional prediction improves. Nothing in the mechanism targets that band | severity: low | class: metric_blind | if_true: long_z below 1\n- The 100.6k new scalars are counted as non-embedding by `param_counts`, giving 21.34M, about +0.5%, well inside C3. The extra per-microbatch rms_norm of the 19.3M-element table, forward and backward, ×8 accumulation steps, is small next to the 79-GFLOP head matmul. This is not where it fails | severity: low | class: hidden_cost | if_true: param_ratio above 1.1\n\nVERDICT: Implemented as written, with a zero-init bias and RMS-normalized rows at unit scale, the head starts about 50× too hot and keeps a ~50× amplified effective learning rate. The zero-init bias cannot travel the ~10 nats of prior within the AdamW budget, so frequency is pushed back into row directions. The likely result is a noisy early lead (if any) that vanishes or reverses by step 1525, below the C7 detection threshold.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 8847,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 13160,
+  "total_tokens": 23577
+ },
+ "cost_usd": 0.912657,
+ "duration_ms": 98752,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 23577,
+ "over_cap": true,
+ "meta": {
+  "card": "premortem",
+  "operator": "io_embed_head-in-k01",
+  "seed": "ledger",
+  "note": "pre-mortem (ledger) of 'Per-token scale and bias decoupling norm from direction'",
+  "node": "io_embed_head"
+ },
+ "prompt_chars": 30171,
+ "raw": {
+  "duration_api_ms": 97329,
+  "stop_reason": "end_turn",
+  "session_id": "30237e9a-cc0f-476e-8336-7e196db0fa45",
+  "total_cost_usd": 0.2825416,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13160,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 8847,
+   "output_tokens_details": {
+    "thinking_tokens": 6097
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13160,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 8847,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 13160,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13160
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 8847,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 13160,
+    "webSearchRequests": 0,
+    "costUSD": 0.2825416,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 6097,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 97433,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 8847,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13160,
+    "total_tokens": 23577
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 8847,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13160,
+    "total_tokens": 23577
+   },
+   "source": "usage"
+  }
+ }
+}

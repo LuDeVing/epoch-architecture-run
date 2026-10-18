@@ -1,0 +1,110 @@
+{
+ "call_id": "c3a453d391e",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "Measuring this would take an instrumented baseline run, and I have not done one. So the step-45, step-100 and step-1525 values below are **unknown**. What follows is the step-0 value worked out from the init, a bound at step 100 derived from the measured residual column, and the build consequences.\n\nThe most important finding: if `exp(a)` starts at the init write level and trains in AdamW at 3e-3, the gain can rise only about 1.3x by step 100. Meanwhile the measured stream implies the per-block writes there are roughly 0.65 or more, against about 0.011 at init. The idea as described would therefore pin the MLP about 50–300x below what the baseline's MLP is doing by then, which most likely trips the KILL bounds.\n\nQUESTIONS, aimed at the weakest links first.\n\nQ1: What is the per-layer MLP write RMS vs attention write RMS at step 0? | decides: apply the gain control to MLP only vs to both sublayers\nA1: From the init (calculated, not measured): the MLP write is about 0.011 in every layer. RMSNorm input gives gate and up entries of std 0.02·√384 = 0.392, silu(g)·u has RMS about 0.081, and w_down contributes 0.00408·√1077 = 0.134. The attention write is 0.080·rms(y) with v std 0.226. Attention near 0.82-std logits over up to 1024 positions puts it between about 0.0015 and 0.018, most likely 0.002–0.005. So at init the MLP write is roughly 3–7x the attention write. Both are large relative to the 0.02-RMS embedding stream.\n\nQ2: What do the measured numbers bound for the combined write per block at step 100? | decides: initialise exp(a) at the init write level (about 0.011) vs at the expected trained level (about 0.3–2)\nA2: By the triangle inequality, each block's combined write RMS is at least its residual increment: at least 1.3 early and at least 0.65 late. If writes were orthogonal to the stream, they would be about √(2.7²−1.4²) ≈ 2.3 early and √(10.9²−10.25²) ≈ 3.7 late. The split between MLP and attention is unknown. Either way, the writes are about 60–300x their init size by step 100.\n\nQ3: How far can `a` move under the default AdamW group? | decides: `a` in the AdamW \"other\" group (lr 3e-3, wd 0.1) vs its own group with higher lr and no weight decay\nA3: Adam moves a parameter by at most about lr per step. The summed lr multiplier is about 85.5 by step 100 (warmup 30) and about 1281 over 1525 steps. So |Δa| is at most about 0.26 nats by step 100 (1.29x) and about 3.8 nats over the whole run (47x). Weight decay on `a` would also pull exp(a) toward 1 at 3e-4 nats per step, which matters if a ≈ −4.5 (exp(a) = 0.011).\n\nQ4: Once c divides by the batch RMS, what else can still set the MLP write magnitude? | decides: let n2.weight and write_logits keep training vs freeze them, or treat exp(a) as the only gain\nA4: The batch-level divide cancels both the matrix norms and the n2.weight scale. What remains is exp(a) (at most 1.3x by step 100, per A3) and 2·sigmoid(write_logits), which is capped at 2x. So by step 100 the MLP write would be at most about 2.6x exp(a)'s starting value, unlike attention, which stays free.\n\nQ5: Does the raw (pre-c) MLP output keep growing under the gain control? | decides: kill on the bound exp(a)/ema ∈ [0.02, 50] vs kill only on exp(a) and loss\nA5: Very likely yes, though unmeasured. Muon's step size does not depend on the gradient scale, so multiplying by c does not slow W's norm growth. Scale-invariant weights grow in norm under gradient training (https://arxiv.org/abs/1803.01814). If the raw output grows about 100x while exp(a) moves 1.3x, then exp(a)/ema falls below 0.02 and the gain-bound KILL fires whether or not the loss is fine.\n\nQ6: How fast does the raw write grow per step, and what does that require of the EMA? | decides: EMA momentum 0.99 vs 0.9, and updating per micro-batch vs per optimizer step\nA6: The rate r is unmeasured. A 100x rise over 100 steps gives r ≈ 0.046 per step. With τ = 100 steps (0.99 per step), the warmup overshoot e^{rτ} is about 100x. With τ ≈ 10 steps it is about 1.6x. `forward` runs 8 times per optimizer step, so momentum 0.99 per micro-batch means τ ≈ 12.5 steps.\n\nQ7: Does the exam's forward update the EMA buffer? | decides: gate the update on `self.training` vs on `torch.is_grad_enabled()` (or both)\nA7: Unknown. The harness calls GPT(cfg).forward(idx), and whether it calls .eval() or no_grad is not shown. The buffer must be persistent so model.pt carries it. Any update during the exam would adapt to val data and make the result depend on order, so the update should be gated on both conditions.\n\nQ8: How do MLP and attention write magnitudes scale with uniform weight-norm growth? | decides: one gain mechanism for both vs MLP-specific\nA8: The MLP write is about cubic in matrix scale: silu(g) ≈ g/2 for small g, so silu(g)·u·W_down scales as gate × up × down. The attention write is quadratic (expand × wo). q and k are normalized, so their norms only change how peaked attention is. Uniform norm growth therefore inflates MLP writes fastest, which supports targeting the MLP first.\n\nQ9: Is the per-stream write equal to the residual increment, or does the 4-stream mixing split it? | decides: EMA on the branch output vs on the per-stream weighted write\nA9: At init, Sinkhorn on exp(6·I) gives diagonal 403.4/406.4 ≈ 0.993 and off-diagonal ≈ 0.0025. The write weights are 2·sigmoid(≈0) ≈ 1. So the four streams start nearly identical and each receives the full branch output. Measuring the EMA on the branch output, before `combine`, is enough unless the mixing de-diagonalises later (unknown).\n\nQ10: What equilibrium weight norm do Muon and decoupled weight decay reach, and when? | decides: expect raw growth to stop by about step 500 (fixed exp(a) suffices) vs expect continued drift (needs a fast `a`)\nA10: The decay time constant is 1/(lr·wd) = 500 steps. For uncorrelated updates, the Frobenius equilibrium is about ‖U‖_F·√(lr/2wd) (rotational equilibrium, https://arxiv.org/abs/2305.17212). For w_down that is about 6.2, or 0.0096 per entry vs 0.0041 at init. For w_gate and w_up (Muon scale 1.675) it is about 10.4, or 0.016 per entry vs 0.02 at init. Correlated updates, which the near-linear stream growth suggests, push norms above this. The real trajectory is unknown.\n\nKNOWN:\n- Plug point: `MLP.forward` output, after `w_down`, before `Block.combine` [script]\n- MLP shapes: w_gate and w_up are 1077×384, w_down is 384×1077; init std 0.02, and w_down 0.02/√24 = 0.00408 [script]\n- Muon shape scale is sqrt(max(1, rows/cols)): w_gate and w_up 1.675, w_down 1.0, expand 2.449, wo 1.0, compress 1.0 [script]\n- MLP write RMS at step 0 ≈ 0.011 in every layer (calculated from init) [belief]\n- Attention write RMS at step 0 ≈ 0.002–0.005, bounded by 0.0015–0.018 (calculated) [belief]\n- Embedding stream RMS at init = 0.02, so step-0 MLP writes are about half the stream [script]\n- Combined write per block at step 100 is at least 1.3 early and at least 0.65 late (triangle inequality on 1.403→10.893) [measured]\n- SDPA default scale is 1/√96, since q is 64 content + 32 rotary dims [script]\n- `forward` runs 8 times per optimizer step (32768 / (4·1024)); an EMA updated in `forward` updates per micro-batch [script]\n- Summed lr multiplier: about 85.5 to step 100, about 1281.5 over 1525 steps (warmup 30, cooldown from 1067) [script]\n- With lr_adam 3e-3, `a` moves at most about 0.26 nats by step 100 and about 3.8 nats over the full run [belief]\n- Decoupled weight decay time constant 1/(lr·wd) = 500 Muon steps; https://arxiv.org/abs/2305.17212 [web]\n- The batch-RMS divide cancels n2.weight's scale on the MLP path [belief]\n- Buffers must be `register_buffer(..., persistent=True)` so model.pt carries the EMA for the exam [script]\n- Muon's NS5 output has singular values near 1 regardless of gradient scale, so c does not change the size of W's updates; https://kellerjordan.github.io/posts/muon/ [web]\n- Instrumenting the question needs forward hooks on `b.attn` and `b.mlp` that log RMS at steps 0, 45, 100, 1525 into metrics.json. No new imports are needed, so C5 and C6 are untouched [belief]\n\nASSUMES:\n- The right target for MLP write magnitude is a per-layer constant set by `a`, not something relative to the stream or to attention\n- `a` trains fast enough to follow what the network needs, within the shared AdamW lr\n- Raw MLP output growth is the problem, not a useful signal the network is using to dominate attention\n- The MLP write is what drives the residual growth (attention is left untouched)\n- Measuring over the whole batch (a scalar) is fine, and per-token magnitude information stays intact\n- Streams remain nearly identical, so one EMA per layer is enough\n- The exam's forward pass leaves buffers frozen\n\nNEW IDEAS:\n\nSLOT: drop\nIDEA: Stream-relative write ratio\nMECHANISM: Drop \"the target is a fixed per-layer level\". Set c = exp(a)·sg(rms(stream input))/ema_rms(write), so `a` sets the write-to-stream ratio (init a = log 0.5, matching step 0) and the write follows stream growth automatically.\nPREDICTION: The write/stream ratio stays within 2x of exp(a); stream growth is still possible but compounds through attention and embedding only.\nTEST: 45 matched steps; log the ratio per layer and the loss over steps 40–45.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\nKIND: leap\nBREAKS: the write magnitude is set in absolute units by the branch's weights\nKILL: mean loss over steps 40–45 more than 0.03 nats above baseline\n\nSLOT: strengthen\nIDEA: Two-timescale AGC with a fast log-gain\nMECHANISM: Put `a` in its own AdamW group (lr 3e-2, wd 0) and use a micro-batch EMA with τ ≈ 1 step. Initialise exp(a) so that c = 1 at step 0, letting `a` cover about 2.5 nats by step 100.\nPREDICTION: exp(a) tracks the baseline's raw write growth within 2x through step 100, and exp(a)/ema stays inside [0.02, 50].\nTEST: 100 steps; log exp(a) and raw write RMS every 10 steps.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\n\nSLOT: specialise\nIDEA: AGC only during warmup and early training\nMECHANISM: Apply c only for steps 0–200, while norms grow fastest, then freeze c as a constant buffer, so the controller never fights the weight equilibrium (τ = 500).\nPREDICTION: Smaller residual growth at step 100; final loss unchanged or better.\nTEST: 200 steps; compare residual growth at step 100 and the loss over steps 180–200.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\n\nSLOT: port\nIDEA: AGC on the attention write\nMECHANISM: The same detached-EMA scalar gain on `wo`'s output, which tests whether the attention writes (quadratic in matrix scale) drive the late linear stream growth.\nPREDICTION: If attention writes dominate late layers, residual growth falls below 7x at step 100.\nTEST: 100 steps; residual RMS after block 11 divided by after block 0.\nSOURCE: own\nPART: Mixing across positions: MLA attention\n\nSLOT: combine\nIDEA: Fixed-norm w_down with a learned scalar (nGPT-style projection)\nMECHANISM: After each Muon step, rescale w_down to its init Frobenius norm and keep exp(a) as the only magnitude, so the scalar sets the magnitude with no EMA and no lag.\nPREDICTION: Write RMS follows exp(a)·f(gate, up); no EMA overshoot.\nTEST: 45 matched steps; log ‖w_down‖ and write RMS.\nSOURCE: https://arxiv.org/abs/2410.01131\nPART: Per-token computation: SwiGLU MLP\n\nSLOT: other\nIDEA: Degree-matched SwiGLU\nMECHANISM: Divide silu(g)·u by the detached batch RMS of g. That cuts the MLP write's scaling in matrix norm from cubic to quadratic, the same as attention, without fixing any magnitude target.\nPREDICTION: The MLP/attention write ratio stays near its init value of 3–7x instead of drifting.\nTEST: 45 steps; log the ratio per layer.\nSOURCE: own\nPART: Per-token computation: SwiGLU MLP\nKIND: leap\nBREAKS: the SwiGLU product's magnitude scales jointly with both input projections\nKILL: mean loss over steps 40–45 more than 0.03 nats above baseline\n\nOPEN:\n- Measured MLP and attention write RMS per layer at steps 45, 100, 1525 | build: yes | decides: init exp(a) at about 0.011 vs at the trained level\n- Raw write growth rate r over steps 0–45 | build: yes | decides: EMA momentum 0.99 vs 0.9\n- Whether the exam calls .eval() or no_grad | build: yes | decides: gate on self.training vs on grad-enabled\n- Whether raw MLP output keeps growing under c | build: yes | decides: gain-bound KILL vs exp(a)-only KILL\n- Whether the 4-stream mixing de-diagonalises later in training | build: no | decides: branch-level vs per-stream EMA\n- What quantity L3 targets (its text is garbled) | build: yes | decides: which weight-norm and Δw statistics to log\n\nLINK STATUS:\n- L1: open | It holds by construction once the EMA settles. But A3 and A5 show c likely drifts below 0.02 unless `a` gets its own fast group or the target is made stream-relative.\n- L2: open | The MLP/attention split at step 100 is unmeasured. At step 0 the MLP write is about 3–7x attention, but the late-layer mechanism is unknown.\n- L3: open | The link's text is garbled. Muon's step size does not depend on c, so W norms likely still grow (A5).\n- L4: open | No run yet. The risk is high that the MLP is suppressed 50–300x by step 100 unless exp(a) is initialised near the trained level or the gain uses a fast log-gain.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 15191,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12719,
+  "total_tokens": 29480
+ },
+ "cost_usd": 1.380188,
+ "duration_ms": 199465,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 29480,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "mlp_swiglu-ou-k00",
+  "seed": "",
+  "note": "interrogating 'Slow batch-level gain on MLP write' gen 0 depth 1: What is the per-layer MLP write RMS vs attention write RMS i",
+  "node": "mlp_swiglu",
+  "depth": 1,
+  "gen": 0
+ },
+ "prompt_chars": 29173,
+ "raw": {
+  "duration_api_ms": 198010,
+  "stop_reason": "end_turn",
+  "session_id": "4b9d749b-0fc9-430d-a5de-929aca742fdc",
+  "total_cost_usd": 0.4058936,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12719,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 15191,
+   "output_tokens_details": {
+    "thinking_tokens": 9739
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12719,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 15191,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12719,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12719
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 15191,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12719,
+    "webSearchRequests": 0,
+    "costUSD": 0.4058936,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 9739,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 198114,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 15191,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12719,
+    "total_tokens": 29480
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 15191,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12719,
+    "total_tokens": 29480
+   },
+   "source": "usage"
+  }
+ }
+}

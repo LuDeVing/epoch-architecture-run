@@ -1,0 +1,110 @@
+{
+ "call_id": "ca0e3edbc49",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll write the sketches directly: twelve scratch seeds, then seven ideas for the latent KV part, four of them leaps, two anchored on the gradient anomalies.\n\nPASS 1 (scratch):\n1. Break \"a slot's key and value come from the same token\": pair key s with value s+1 so one layer does induction. [kept, farthest]\n2. Break \"the latent depends only on its own token\": 2-tap causal shift on the latent before the norm. [port, RWKV token shift]\n3. Break \"scores live in a per-head 64-d space\": absorb the key expansion into the query, score against the 128-d latent directly.\n4. Break \"K and V are linear images of the latent\": gated nonlinear expansion, since linearity only buys inference absorption we never use. [kept]\n5. Break \"a key carries no information about where it was seen\": add the running mean of earlier latents to the key path. [kept]\n6. Break \"position gets 32 of 96 score dims\": sweep the rope width. [tune]\n7. Break \"the rope slice is unnormalized while the content slice is normalized\": norm qr and kr. [port]\n8. Break \"every layer compresses afresh\": reuse the previous layer's latent. [needs Block, out of this part]\n9. Break \"all keys are per-token\": append 16 chunk-mean latents as summary slots. [V4 HCA port, mask cost]\n10. Break \"the latent norm has one gain for both paths\": separate key and value gains. [too small]\n11. Break \"values are the token's content\": value is latent_s minus latent_{s-1}. [no mechanism for why loss drops]\n12. Break \"the latent is deterministic\": noise on the latent. [no overfitting at 50M tokens, drop]\nExistence operator: three mechanisms that could recover a third of the gap to a 2x model at ≤2% time are seeds 1, 3 and 4. At 45 matched steps each would have to show, respectively: recall-token loss already below baseline, matched-step loss below baseline at equal clip-norm, and matched-step loss below baseline with the gate not saturated.\n\nIDEA: Successor-value heads\nMECHANISM: Anomaly row restated: attention gradient in layer 2 is 15% below what layers 1 and 3 predict, the minimum of the depth profile. Three rivals: the detector flags the bottom of any U-shaped curve, an artifact of a three-point linear fit; the Sinkhorn mixing routed layer 2's output to a stream later layers read little, so its gradient is starved; layer 2 is the induction layer waiting for the prev-token circuit in layers 0-1 to form, so at step 100 its useful signal has not arrived. Five-minute probe on the step-100 checkpoint: measure for layers 1-3 the share of attention mass on offset -1 and on positions matching the current token's previous occurrence, plus the read weights later layers put on the stream layer 2 writes to. If the least popular rival holds, the fix is to let induction happen inside one layer: in three of six heads, query t attends to keys at s ≤ t-1 but retrieves the value built from latent_{s+1}, so \"find my earlier occurrence, copy what followed\" needs no two-layer composition and no prev-token head capacity.\nPREDICTION: recall-token loss at step 100 from 4.475 to about 4.2 with other tokens unchanged; validation loss at 50M tokens lower by 0.02 to 0.04; zero extra parameters; step time within 2% since it is two SDPA calls on three heads each with shifted slices.\nTEST: 100-step matched-seed run with the recall-token probe; if recall loss is not at least 0.1 below baseline at step 100 the mechanism is absent. A 3-step timing confirms the split SDPA cost.\nSOURCE: own\nTARGET: recall-token loss, down; secondary attention entropy in layers 2-4, down.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: a key and the value it returns need not describe the same token; half the heads return the content of the token after the match.\nKEEPS: same latent, same compress and expand matrices, same rope and norms, the other three heads unchanged, causality intact because s+1 ≤ t.\nP_SUCCESS: 0.2\nKILL: at 45 matched steps, recall-token loss not below baseline by 0.05, or total loss above baseline by 0.02.\n\nIDEA: Latent token shift\nMECHANISM: Anomaly row restated: attention gradient in layer 0 is ten times that of layers 1-11 on all three seeds. Three rivals: the layer-0 branch writes into a residual of RMS 1.4 versus 10.9 at the end, so the loss is most sensitive there; layer 0 is the only layer whose keys are built from raw token embeddings, so it alone carries the prev-token and bigram job that dominates early training; a measurement artifact, one micro-batch before clipping, where the compress and rotary matrices acting on near-one-hot normed embeddings inherit batch token composition and a 20-batch average would shrink the cell. Probe on the checkpoint: per-matrix gradient norms for wq, compress, expand, rotary and wo in layers 0-2 over 20 batches; rival one predicts uniform inflation across all five and the MLP too, rival two predicts concentration in compress and rotary, rival three predicts high variance and a smaller mean. If rival two holds, every layer should get cheap access to the previous token's content: mix the latent with the previous position's latent through a learned per-channel two-tap gate before the latent norm, so prev-token keys exist in every layer and layer 0 stops being a bottleneck.\nPREDICTION: layer-0 attention gradient falls toward 0.1 as the job spreads; recall-token loss down 0.1 at step 100; validation loss lower by 0.01 to 0.02; 256 parameters per layer; step time unchanged within noise.\nTEST: 1-minute smoke comparison at matched steps, plus the per-layer gradient table; if layer-0 grad norm does not drop by a third, the mechanism did not take over the job.\nSOURCE: https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html (short causal convs on K and V), and RWKV token shift.\nTARGET: gradient norm spread, down; recall-token loss, down.\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Query scored against the latent\nMECHANISM: The key expansion exists so that absorption is possible at inference; at 1024 context with no cache it is a cost paid for nothing, and it limits each head's score to rank 64 inside a 128-d latent. Drop the key expansion: keys are the normed latent itself, shared by all heads like multi-query attention, and each head's content query is a 128-d projection of the stream, normed per head. Muon then orthogonalizes one 384 by 960 query matrix instead of two chained matrices, and the score rank per head doubles.\nPREDICTION: matched-step loss lower by 0.02 by step 500 and validation loss lower by 0.015 at 50M; parameters up 98,304 per layer, 1.18M total, within the cap; step time up about 3% from the 160-d score dot product.\nTEST: build-only parameter count, 3-step timing, then a 100-step matched run; killed if matched-step loss is not below baseline at step 100.\nSOURCE: own, building on the MLA absorption identity of DeepSeek-V2.\nTARGET: attention entropy in deep layers, down; max attention logit unchanged because of the latent norm.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: keys need not be per-head vectors in a 64-d space; all heads score directly against one shared 128-d latent.\nKEEPS: compress, latent norm, value expansion, rope key, q-norm, wo, head count, causal mask.\nP_SUCCESS: 0.18\nKILL: at 45 matched steps, loss above baseline by 0.02 at equal gradient-clip ratio.\n\nIDEA: Gated nonlinear expansion\nMECHANISM: Linearity of expand is inherited from the inference recipe, but here the 128-d latent is a true bottleneck that six heads must share. Make the expansion a gated map, expand(c) times silu(gate(c)), so keys and values become a two-layer function of the latent and the six heads can carve different nonlinear views from the same 128 channels.\nPREDICTION: validation loss lower by 0.01; parameters up 98,304 per layer, 1.18M total; step time up under 2%.\nTEST: build-only count, 3-step timing, 100-step matched run; killed if the gate's mean activation stays near 0.5 and loss is not below baseline by step 100.\nSOURCE: own\nTARGET: validation loss only; secondary attention entropy in deep layers, down.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: keys and values are a linear image of the latent.\nKEEPS: compression, the norm, same latent width, same q path, same scores.\nP_SUCCESS: 0.15\nKILL: at 45 matched steps, loss not below baseline, or gate saturation above 90% of units.\n\nIDEA: Prefix-conditioned keys\nMECHANISM: A key describes only its own token, yet late positions lose 0.46 nats to early ones and the only context a key has is through the stream. Add to the key path the running mean of all earlier latents, computed once by cumulative sum in float32, scaled by a learned per-channel gate initialized near zero; values keep the pure latent. A query can then match \"the word as used in this document's topic\" rather than the bare word.\nPREDICTION: late-minus-early loss gap shrinks from 0.46 by 0.05 at step 100; validation loss lower by 0.005 to 0.01; 128 parameters per layer; step time up under 1%.\nTEST: 100-step matched run with the position-bucket probe; killed if positions 256-1024 are not below baseline while 0-64 are unchanged.\nSOURCE: own\nTARGET: loss at late positions, down.\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: a key is a function of its own token alone.\nKEEPS: value path untouched, same expand, same norms and rope, causal mask.\nP_SUCCESS: 0.12\nKILL: at 45 matched steps, the late-position bucket is not below baseline by 0.03.\n\nIDEA: Rope width sweep\nMECHANISM: Position holds 32 of the 96 score dimensions with a single unnormalized shared rope key, a split copied from V4 and never tested at this width. Changing rd rebalances how much of the logit budget is positional versus content.\nPREDICTION: at rd 16, parameters down 43k per layer and late-position loss up; at rd 48 or 64, parameters up 65k or 86k per layer and late-position loss down by 0.02 to 0.05 at step 100; validation effect in the range of 0.01 either way.\nTEST: sweep rd in {16, 48, 64}, 100 matched steps each with the position-bucket probe.\nSOURCE: own\nTARGET: loss at late positions.\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Normalized rope slice\nMECHANISM: qr and kr are the only unnormalized pieces of the score, so the maximum logit of 22.75 at layer 8 can come from them growing without a bound while the content slice is pinned by q-norm and k-norm. RMS-normalize qr per head and kr once, with learned gains, so the whole dot product has a controlled scale and the positional term cannot drown the content term.\nPREDICTION: max attention logit at layer 8 falls below 16; validation loss lower by 0.005; 64 parameters per layer; no measurable time cost.\nTEST: 100-step matched run with the max-logit probe; killed if logits do not fall or loss rises.\nSOURCE: https://arxiv.org/html/2607.02770 (Gemma 4 QKNorm), extended to the rope slice.\nTARGET: max attention logit, down.\nSCOPE: validation loss at 1024\nKIND: port\n\nRecap: seven sketches, four leaps, two anchored on the layer-0 and layer-2 gradient anomalies. The strongest first test is successor-value heads, since it costs no parameters and its kill signal, recall-token loss at 45 steps, is cheap to read.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 16696,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 19020,
+  "total_tokens": 39145
+ },
+ "cost_usd": 1.721595,
+ "duration_ms": 260507,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 39145,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:diagnosis",
+  "operator": "inward",
+  "seed": "",
+  "note": "Sequence mixing: latent KV compression and expansion / inward / diagnosis",
+  "node": "attn_latent_kv",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 42594,
+ "raw": {
+  "duration_api_ms": 258990,
+  "stop_reason": "end_turn",
+  "session_id": "567d8552-d8c3-4e5a-83b6-bdfe1fe7928f",
+  "total_cost_usd": 1.21607675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 19020,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 16696,
+   "output_tokens_details": {
+    "thinking_tokens": 12514
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19020,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 16696,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 19020,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 19020
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 16696,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 19020,
+    "webSearchRequests": 0,
+    "costUSD": 1.21607675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 12514,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 259124,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 16696,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19020,
+    "total_tokens": 39145
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 16696,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19020,
+    "total_tokens": 39145
+   },
+   "source": "usage"
+  }
+ }
+}

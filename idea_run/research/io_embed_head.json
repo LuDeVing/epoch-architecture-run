@@ -1,0 +1,144 @@
+{
+ "node": "io_embed_head",
+ "ts": "2026-10-13T21:19:59",
+ "queries": [
+  "modded-nanoGPT speedrun untied embedding lm_head, logit softcap, value embeddings record log",
+  "tied vs untied input output embeddings small language model ablation arXiv 2025",
+  "logit softcapping z-loss output logits stability language model training",
+  "parameter-golf OpenAI tied embeddings tuned embedding learning rate, softcap, small model tricks",
+  "multi-token prediction small language models hurt or help at small scale; token-frequency aware loss rho-1 selective language modeling",
+  "Lopardo Weight Tying Biases Token Embeddings Towards the Output Space"
+ ],
+ "known": [
+  {
+   "name": "Untie embedding and lm_head",
+   "mechanism": "Give the output head its own matrix instead of sharing the input embedding table.",
+   "effect": "Record 8 in the modded-nanoGPT log (10.8 min, 11/03/24) is listed as 'Untied embed and lm_head'. The search snippet gave no loss numbers.",
+   "where": "modded-nanoGPT, GPT-2 124M-class on FineWeb, reaching 3.28 val loss",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "name": "Late untying (untie at 2/3 of training)",
+   "mechanism": "Train with a tied embedding and head for the first part of training, then split them into separate matrices at about 2/3 of the run.",
+   "effect": "Listed in the current README among the speedrun improvements. The snippet gave no per-item numbers.",
+   "where": "modded-nanoGPT, later records",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "name": "Tanh logit softcap (30, then 15)",
+   "mechanism": "Squash the logits as c*tanh(logits/c) before the cross entropy, following Gemma 2.",
+   "effect": "Record 9 (8.2 min) bundled it with value and embedding skips and momentum warmup. Record 18 (3.4 min, 01/04/25) lowered the cap from 30 to 15 for a further speedup.",
+   "where": "modded-nanoGPT, 124M",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "name": "Value embeddings and embedding skip connections (re-injecting token identity)",
+   "mechanism": "Extra token-embedding tables are added into the attention values or the residual stream at later layers, so the embedding is read more than once.",
+   "effect": "Record 14 (4.41 min, 12/04/24) added value embeddings. Records 15, 16 and 17 added a U-net pattern, then split and sparsified versions. Record 9 added embedding skip connections.",
+   "where": "modded-nanoGPT, 124M",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "name": "Weight tying (Press & Wolf)",
+   "mechanism": "Share the input embedding and the output projection to cut parameters and regularize.",
+   "effect": "Perplexity improved with and without dropout. In translation it cut model size by more than half without hurting performance.",
+   "where": "Original LSTM language-model and NMT experiments, 2016",
+   "url": "https://arxiv.org/pdf/1608.05859"
+  },
+  {
+   "name": "Tied embeddings are shaped mostly by the output side, and scaling input gradients reduces this",
+   "mechanism": "Output gradients dominate early in training, so the tied matrix ends up closer to an untied unembedding than to an untied input embedding. Scaling up the input-side gradient reduces the bias.",
+   "effect": "On OLMo-1B-scale comparisons, the mean cosine to the untied output matrix was about 0.72, versus about 0.53 to the untied input matrix. Weaker early-layer computation (tuned lens) is linked to this. The authors say tying may hurt at scale and matters most for small LLMs. Findings of ACL 2026.",
+   "where": "OLMo-1B-class and related models",
+   "url": "https://arxiv.org/pdf/2603.26663"
+  },
+  {
+   "name": "Output embedding centering (μ-centering and μ-loss)",
+   "mechanism": "Subtract the mean output embedding after each step (μ-centering), or add λ·μᵀμ to the loss with λ=1e-4 (μ-loss), to remove the anisotropy that causes logit divergence.",
+   "effect": "Final loss was essentially unchanged: every method reaches 3.05 at 221M. Learning-rate sensitivity dropped, for example at 57M from 0.508 baseline and 0.235 z-loss to 0.031 μ-loss and 0.041 μ-centering. Overhead was 0.2–0.7%, versus 0.8–6.4% for z-loss.",
+   "where": "16M–221M dense decoders, 13.1B tokens each",
+   "url": "https://arxiv.org/html/2601.02031v1"
+  },
+  {
+   "name": "Z-loss (auxiliary log²Z penalty)",
+   "mechanism": "Add a penalty on log Z (coefficient 1e-4 in PaLM) to keep the softmax normalizer near zero and stop output-logit divergence.",
+   "effect": "Output-logit divergence appeared in models without weight decay at any scale, and z-loss removed it. This is a stability fix, not a loss gain.",
+   "where": "Small-scale proxy studies of large-model instabilities",
+   "url": "https://arxiv.org/pdf/2309.14322"
+  },
+  {
+   "name": "Multi-token prediction as an auxiliary output objective for small models",
+   "mechanism": "Extra heads predict several future tokens in addition to the next token.",
+   "effect": "A BabyLM 2025 paper reports gains for models as small as 130M, including under severe data constraints. A separate curriculum study says plain MTP hurts small models unless the number of future tokens is scheduled (a forward curriculum helped at 1.3B and 3B), and that subword models improve over static MTP but not over next-token prediction.",
+   "where": "130M (BabyLM) and 1.3B–3B (curriculum study)",
+   "url": "https://aclanthology.org/2025.babylm-main.41"
+  },
+  {
+   "name": "Tied matrices end up output-shaped: mean cosine about 0.72 to an untied output m",
+   "mechanism": "Tied matrices end up output-shaped: mean cosine about 0.72 to an untied output matrix versus about 0.53 to an untied input matrix at OLMo-1B scale; the lens is a way to give the input side its own frame without a second 50304x384 table. https://arxiv.org/pdf/2603.26663",
+   "effect": "",
+   "where": "found while interrogating an idea",
+   "url": "https://arxiv.org/pdf/2603.26663"
+  },
+  {
+   "name": "Press and Wolf tied the embeddings and added a square projection with an L2 pena",
+   "mechanism": "Press and Wolf tied the embeddings and added a square projection with an L2 penalty on the output side, reporting a further perplexity gain; the lens is the input-side mirror of that construction. https://arxiv.org/pdf/1608.05859",
+   "effect": "",
+   "where": "found while interrogating an idea",
+   "url": "https://arxiv.org/pdf/1608.05859"
+  },
+  {
+   "name": "Full untying (modded-nanoGPT record 8) would add about 19.3M non-embedding param",
+   "mechanism": "Full untying (modded-nanoGPT record 8) would add about 19.3M non-embedding parameters here and violate C3, which is why a 384x384 lens is the affordable substitute. https://github.com/KellerJordan/modded-nanogpt",
+   "effect": "",
+   "where": "found while interrogating an idea",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  }
+ ],
+ "failed": [
+  {
+   "name": "Z-loss and softcap as loss improvers",
+   "why": "The centering paper finds the best achievable loss is unchanged across baseline, z-loss and μ methods (3.05 at 221M). The benefit is stability across learning rates only, so it should not be expected to lower loss at a fixed, well-tuned learning rate. Z-loss also needed λ=1e-1 rather than the usual 1e-4, still showed occasional divergence, and cost up to 6.4% in time.",
+   "url": "https://arxiv.org/html/2601.02031v1"
+  },
+  {
+   "name": "Plain multi-token prediction for small subword models",
+   "why": "Prior work cited in the curriculum study found small models struggle with the standard MTP objective. Static MTP did not beat next-token prediction for subword models, and the benefit needs a curriculum.",
+   "url": "https://www.themoonlight.io/en/review/pre-training-curriculum-for-multi-token-prediction-in-language-models"
+  },
+  {
+   "name": "Weight tying in deeper or larger models",
+   "why": "Lopardo et al. report that tying biases the embedding toward the output space and weakens early layers. They cite Chung et al. 2020 for tying hurting deeper transformers, and note that Qwen3 unties at larger sizes and OLMo 2 and 3 untie at all sizes.",
+   "url": "https://arxiv.org/pdf/2603.26663"
+  }
+ ],
+ "open": [
+  {
+   "direction": "Scale up the input-side gradient to the tied matrix, for example with a separate embedding learning-rate multiplier or gradient scaling, while keeping the tie.",
+   "why": "This was shown to reduce the output bias in tied embeddings, but only analysed at OLMo-1B scale. Nobody has tested whether it improves loss in a tiny tied model. A related paper studies embedding-layer learning rate and weight tying and says the embedding LR matters for hyperparameter transfer.",
+   "url": "https://arxiv.org/pdf/2603.26663"
+  },
+  {
+   "direction": "Give the embedding table its own optimizer and learning rate (for example 8x the rate of the orthogonalized hidden matrices), and design the optimizer to respect the structure of embeddings and LM heads.",
+   "why": "A Parameter-Golf proposal claims tied embeddings tolerate a much higher learning rate, citing modded-nanoGPT. It is unverified. A 2026 paper proposes a symmetry-compatible optimizer principle for embeddings and LM heads, but its small-scale numbers were not read.",
+   "url": "https://arxiv.org/pdf/2605.18106"
+  },
+  {
+   "direction": "Schedule the tie: tied early, untied later, or a low-rank untied correction on top of the shared matrix.",
+   "why": "The modded-nanoGPT record log lists 'untie at 2/3 of training' with no published ablation. It is untested whether the gain survives a 50M-token budget and larger models.",
+   "url": "https://github.com/KellerJordan/modded-nanogpt"
+  },
+  {
+   "direction": "Pair the tied head with output-embedding centering instead of a softcap, and compare the two at a fixed learning rate.",
+   "why": "μ-centering costs about 0.3–0.6% in time and matches softcap on stability in the paper. Its effect on loss at a tuned learning rate for a tiny tied model, and its value in a short 50M-token run, has not been tested.",
+   "url": "https://arxiv.org/html/2601.02031v1"
+  },
+  {
+   "direction": "Auxiliary multi-token prediction with a forward curriculum, with the extra heads dropped at evaluation.",
+   "why": "The evidence is mixed at small scale. Gains are reported at 130M in BabyLM, but static MTP hurts small subword models, so a scheduled MTP is open at about 20M non-embedding parameters.",
+   "url": "https://www.themoonlight.io/en/review/pre-training-curriculum-for-multi-token-prediction-in-language-models"
+  }
+ ],
+ "backend": "cli_json",
+ "source": "cache"
+}

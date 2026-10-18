@@ -1,0 +1,105 @@
+{
+ "call_id": "ceabf71df49",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"name\":\"Unigram/frequency bias on logits\",\"members\":[\"sde6c67c3aa\",\"sb95145d1b7\"]},\n{\"name\":\"Per-token scale and bias decoupling norm from direction\",\"members\":[\"s1d5a6243e8\"]},\n{\"name\":\"Remove self-embedding echo before head\",\"members\":[\"s7d59871358\"]},\n{\"name\":\"Multi-stream split/readout changes\",\"members\":[\"s25ff21218a\",\"sf1e7170c0a\"]},\n{\"name\":\"Per-position temperature\",\"members\":[\"sad73d52409\"]},\n{\"name\":\"Input-side gradient amplification\",\"members\":[\"s6c4837adba\"]},\n{\"name\":\"Low-rank untied head correction\",\"members\":[\"safff687645\"]},\n{\"name\":\"Input embedding scale/normalization at entry\",\"members\":[\"s7cfbee62e8\",\"s0f7c1fbe06\"]},\n{\"name\":\"Bigram input shift\",\"members\":[\"sca610bcc95\"]},\n{\"name\":\"Distance (Gaussian) head\",\"members\":[\"sd3fb4745ec\"]},\n{\"name\":\"Re-inject token row at every block\",\"members\":[\"s11fab65fc3\"]}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 383,
+  "cache_read_input_tokens": 649,
+  "cache_creation_input_tokens": 4353,
+  "total_tokens": 5387
+ },
+ "cost_usd": 0.022269,
+ "duration_ms": 5728,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 5387,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: io_embed_head/inward, 14 sketches"
+ },
+ "prompt_chars": 8534,
+ "raw": {
+  "duration_api_ms": 4016,
+  "stop_reason": "end_turn",
+  "session_id": "945b4bf1-8224-4fa6-a5c0-872900cc8061",
+  "total_cost_usd": 0.0213109,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 4353,
+   "cache_read_input_tokens": 649,
+   "output_tokens": 383,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 4353,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 383,
+     "cache_read_input_tokens": 649,
+     "cache_creation_input_tokens": 4353,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 4353
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 383,
+    "cacheReadInputTokens": 649,
+    "cacheCreationInputTokens": 4353,
+    "webSearchRequests": 0,
+    "costUSD": 0.0213109,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 4090,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 383,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 4353,
+    "total_tokens": 5387
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 383,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 4353,
+    "total_tokens": 5387
+   },
+   "source": "usage"
+  }
+ }
+}

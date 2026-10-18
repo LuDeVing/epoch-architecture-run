@@ -1,0 +1,105 @@
+{
+ "call_id": "cb6240b3879",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  [\"io_embed_head-in-k01\", \"io_embed_head-ou-k02\", \"io_embed_head-in-k00\"],\n  [\"io_embed_head-in-k02\", \"io_embed_head-ou-k00\"],\n  [\"io_embed_head-in-k05\", \"io_embed_head-ou-k05\"],\n  [\"io_embed_head-in-k06\", \"io_embed_head-ou-k01\"],\n  [\"io_embed_head-in-k07\", \"depth_norm_init-in-k00\", \"depth_stream_mix-in-k07\"],\n  [\"io_embed_head-in-k03\", \"io_embed_head-ou-k04\", \"io_embed_head-in-k08\"],\n  [\"attn_heads_outpu-in-k01\", \"attn_latent_kv-ou-k06\", \"attn_latent_kv-in-k08\"],\n  [\"mlp_swiglu-in-k02\", \"mlp_swiglu-ou-k05\"],\n  [\"attn_latent_kv-in-k00\", \"attn_latent_kv-ou-k03\"],\n  [\"attn_rope_norm-in-k10\", \"attn_rope_norm-ou-k05\", \"attn_heads_outpu-ou-k05\"],\n  [\"attn_latent_kv-in-k04\", \"attn_heads_outpu-in-k00\", \"attn_heads_outpu-ou-k04\"],\n  [\"attn_rope_norm-in-k04\", \"attn_heads_outpu-in-k09\", \"attn_rope_norm-ou-k04\", \"attn_latent_kv-ou-k00\"],\n  [\"attn_latent_kv-in-k05\", \"attn_latent_kv-ou-k05\"],\n  [\"attn_latent_kv-in-k06\", \"attn_rope_norm-in-k01\"],\n  [\"attn_latent_kv-in-k12\", \"attn_rope_norm-in-k00\"],\n  [\"attn_heads_outpu-in-k02\", \"attn_heads_outpu-ou-k06\"],\n  [\"attn_rope_norm-in-k02\", \"attn_heads_outpu-in-k07\"],\n  [\"attn_heads_outpu-in-k03\", \"attn_rope_norm-in-k07\", \"attn_latent_kv-ou-k02\"],\n  [\"attn_rope_norm-in-k08\", \"attn_rope_norm-ou-k03\", \"attn_heads_outpu-in-k05\"],\n  [\"mlp_swiglu-in-k03\", \"mlp_swiglu-ou-k06\"],\n  [\"mlp_swiglu-in-k04\", \"mlp_swiglu-ou-k04\"],\n  [\"depth_stream_mix-in-k05\", \"depth_norm_init-in-k04\", \"depth_norm_init-ou-k01\", \"depth_layer_stac-in-k00\", \"depth_layer_stac-ou-k00\"],\n  [\"depth_stream_mix-in-k04\", \"depth_norm_init-ou-k00\"],\n  [\"depth_layer_stac-in-k01\", \"depth_layer_stac-ou-k01\"],\n  [\"depth_norm_init-in-k06\", \"io_embed_head-ou-k03\"],\n  [\"depth_stream_mix-in-k11\", \"depth_stream_mix-ou-k03\"]\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 4120,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 16885,
+  "total_tokens": 22575
+ },
+ "cost_usd": 0.125595,
+ "duration_ms": 28571,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 22575,
+ "over_cap": true,
+ "meta": {
+  "card": "merge",
+  "note": "same idea filed under different parts? 137 clusters"
+ },
+ "prompt_chars": 42208,
+ "raw": {
+  "duration_api_ms": 27359,
+  "stop_reason": "end_turn",
+  "session_id": "cd98215b-9a0b-487f-92b5-5b8b1f64e0a5",
+  "total_cost_usd": 0.10890079999999999,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 16885,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 4120,
+   "output_tokens_details": {
+    "thinking_tokens": 3029
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 16885,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 4120,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 16885,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 16885
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 4120,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 16885,
+    "webSearchRequests": 0,
+    "costUSD": 0.10890079999999999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 3029,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 27445,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 4120,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 16885,
+    "total_tokens": 22575
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 4120,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 16885,
+    "total_tokens": 22575
+   },
+   "source": "usage"
+  }
+ }
+}

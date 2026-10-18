@@ -1,0 +1,110 @@
+{
+ "call_id": "cb0346df78f",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "QUESTIONS, aimed at the weakest links first. Each answer would change how the idea is built, and each names the two build choices it decides:\n\nQ1: Do three end-of-run baseline `model.pt` files (seeds 0–2, this exact MLA + 4-stream script) already exist, or must the baseline be rerun to read the gains? | decides: measure offline from existing checkpoints vs add a `norm_stats` dump to `metrics.json` and rerun 3 baselines\nA1: Unknown. None of the material provided reports a checkpoint path or gain values. The statistics need only the parameters and no data, so a dump at the end of training is legal under C6 and costs nothing at run time. It is still a training-script edit and must not land in the candidate build.\n\nQ2: What CV would a gain vector reach with no useful gradient at all, which is the noise floor the measured CV must be compared against? | decides: keep the L4 rule \"CV < 0.15 means idle\" vs replace it with an ablation-based rule\nA2: AdamW applied to pure-noise gradients random-walks each channel with std ≈ lr·√Σmult² = 3e-3·√1200.7 ≈ 0.104, while decay shrinks the mean to exp(−0.1·3e-3·1282) ≈ 0.681. Noise alone therefore gives CV ≈ 0.10–0.15 per vector. \"CV < 0.15\" cannot separate an idle vector from a slightly used one, so the rule has to change.\n\nQ3: Can channel-wise statistics be pooled or correlated across the 3 seeds? | decides: report a cross-seed per-channel correlation vs report only per-vector summaries plus a within-seed ablation\nA3: No. Residual-stream and head-dim bases come from seed-dependent random init, so channel i in seed 0 has no relation to channel i in seed 1. Cross-seed agreement can only be checked on permutation-invariant summaries: mean, CV, robust CV (MAD/median), min, max, and the sorted gain profile.\n\nQ4: For n1, n2 and latent_norm, does the measured CV matter for expressivity at all? | decides: convert these three to one scalar each vs make them fully weightless (no scalar)\nA4: It does not. Each of these gains multiplies the input of a following Linear layer, so it can be folded exactly into that layer's columns, and removing it loses no function. What remains differs only in optimization dynamics, which a scalar affects through how fast the overall scale can move. Their mean matters more than their CV. In particular, the n1 mean sets only the rotary-logit temperature (s²).\n\nQ5: What is the baseline mean of gq⊙gk per layer, and does the 1.4× init matter by the end of the run? | decides: q-side scalar initialized to 1.4 vs 1.0\nA5: The mean is unknown. A scalar's gradient aggregates over every channel, so its Adam step runs close to the full lr when the gradient sign is consistent. Moving 0.4 then takes about 0.4 / 3e-3 ≈ 133 full-lr steps. The init can therefore shape only roughly steps 0–150, and the final temperature is set by the gradient/decay equilibrium, not by the init. The noise floor of the product is higher than that of a single vector: √(0.10² + 0.13²) gives roughly 0.14–0.18.\n\nQ6: Is the final-norm gain the one vector that carries real per-channel information, given that it is the only untied per-channel freedom between the input and output embeddings? | decides: convert the final norm to a scalar vs keep its 384-wide gain as the one exception\nA6: Unknown. It is decided by mean-ablation, not by CV: replace g_final with mean(g_final) in each seed's checkpoint and measure the Δ train loss on held-out train-shard windows, split by frequency bucket (rank 0–100 vs 10000+). Keep the vector if the rare-bucket Δ exceeds 0.05. Keeping it costs about 383 params of the saving.\n\nQ7: Are the CVs dominated by a few outlier channels (near-zero or very large gains), which would mean feature selection rather than temperature? | decides: uniform scalar everywhere vs scalar plus a frozen per-channel mask for outlier channels\nA7: Unknown. Report min, max, robust CV and the count of channels below 0.2·mean or above 3·mean, alongside the plain CV. If any vector has outlier channels, the L4 break condition \"channels near 0\" is met and that norm keeps its gain.\n\nQ8: Do mean and CV vary systematically with depth, especially at layer 0, where the attention gradient is 0.24 against 0.02–0.03 elsewhere? | decides: one scalar per norm per layer vs one scalar shared across layers\nA8: Unknown. Layer 0 is already known to behave differently (z 7.03 over 3 seeds), so per-layer scalars are the safer default (24 + 12 + 1 values). A shared scalar is justified only if the per-layer means agree within the noise floor.\n\nQ9: Should the new scalars sit in a no-decay group? | decides: leave them in AdamW \"other\" with wd 0.1 vs edit `build_optimizers` to add a wd = 0 group\nA9: With decoupled decay, the equilibrium needs a normalized Adam step of wd·p ≈ 0.1–0.14 for p ≈ 1–1.4. A weak but persistent gradient bias therefore suffices, and decay pulls each scalar down by up to about 0.32 (to 0.681 of its value) when the gradient carries no signal. If the baseline means come out near 0.68, decay is what set them, so exempt the scalars. If the means are clearly above 1, gradient dominates and the choice barely matters.\n\nKNOWN:\n- Baseline non-embedding params = 12 × 1,770,160 + 384 = 21,242,304. Per block that is attention 528,384, MLP 1,240,704, norms 1,024 and mix/read/write 48. [script]\n- Norm gain params total 12,672 (12 × 1,024 + 384). Converting all 61 norms to scalars gives −12,611; converting n1, n2 and final (25 scalars) gives −9,575. Converting n1, n2, final and q_norm (37 scalars) gives −10,331. Converting n1, n2 and final plus one shared q/k temperature per layer removes q_norm and k_norm too and gives 11,136 − 37 = −11,099. [script]\n- Pure-decay end value of an idle gain = exp(−0.1 · 3e-3 · 1282) ≈ 0.681. [script]\n- Random-walk std of an idle gain ≈ 3e-3 · √1200.7 ≈ 0.104, which puts the noise CV at about 0.10–0.15. [belief]\n- Noise-floor CV of the product gq⊙gk ≈ 0.14–0.18. [belief]\n- Channel bases are not aligned across seeds, so only permutation-invariant statistics can be compared across seeds. [belief]\n- n1, n2 and latent gains fold exactly into the following Linear columns. q/k and final do not. [measured]\n- An n1 scalar sets only the rotary-logit temperature (s²). An n2 scalar scales the MLP output by roughly s². A latent scalar reaches only v. [measured]\n- A scalar moves about 0.4 in roughly 133 full-lr steps, so init effects fade by about step 150. [belief]\n- Scalars must be built with `torch.tensor(...)` or `torch.ones(())` so they draw no RNG. 0-D params fall into AdamW \"other\" with wd 0.1 unless `build_optimizers` is edited. [script]\n- Baseline step-100 train loss is 6.1789. Run length is 1,525 steps, warmup 30, cooldown from step 1,067. [measured]\n- Any gain-ablation analysis must read train-shard windows and never val.bin (C6). [script]\n- Weightless rms_norm is used in modded-nanogpt: https://github.com/kellerjordan/modded-nanogpt [web]\n- Gemma's (1+w) gain makes decay pull toward identity: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py [web]\n\nASSUMES:\n- Per-channel gains act as temperatures rather than feature selectors, so their spread is noise.\n- Every norm needs some learnable scale; a fully fixed scale would lose something.\n- The content temperature (gq⊙gk) and the MLP pre-activation scale are the scales that matter. The rotary temperature (n1) and the v scale (latent) are not singled out.\n- One temperature per norm per layer is enough; per-head temperatures are not needed.\n- The 1.4× attention-temperature init persists long enough to affect the final loss.\n- The final norm's per-channel gain is not needed to decouple the tied head.\n- Weight decay on the scalars is either harmless or should be exempted. The idea does not commit to one.\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Weightless foldable norms, one content temperature per layer\nMECHANISM: Make n1, n2 and latent_norm fully weightless, since their gains fold into the following Linear layers. Replace q_norm and k_norm gains with one no-decay scalar τ_l per layer on the content logits. Keep the final 384-wide gain until Q6 is settled.\nPREDICTION: Params −11,099 + 384 kept = about −10,715. Step-45 loss within ±0.02 of baseline. τ_l rises above 1 in mid and late layers.\nTEST: Run `--build-only` and check the delta, then a 45-step smoke paired on seed 0.\nSOURCE: https://github.com/kellerjordan/modded-nanogpt\nPART: State across depth: normalization placement and initialization\nKIND: leap\nBREAKS: Every normalization owns a learnable scale.\nKILL: Mean train loss over steps 36–45 more than 0.03 above baseline.\n\nSLOT: strengthen\nIDEA: Separate per-head content and rotary temperatures\nMECHANISM: Put two no-decay scalars per head on the SDPA logits, one multiplying q_c and one multiplying q_r. Init content at 1.4 and rotary at 1.0. These are the only attention scales that Muon and the shared head-wide gains cannot set per head.\nPREDICTION: By step 300 the per-head temperatures diverge (spread > 0.2 within a layer). Attention entropy at layers 3–11 falls by 0.01–0.08.\nTEST: A 300-step run logging the temperature trajectories. Equal per-head values refute the need.\nSOURCE: own\nPART: State across depth: normalization placement and initialization\nKIND: port\n\nSLOT: specialise\nIDEA: Keep gains only where the evidence says they work: layer-0 n1 and the final norm\nMECHANISM: Use scalars everywhere except layer-0 n1 (the anomalous 0.24 gradient) and the final norm (the tied-head decoupling), which keep their 384-wide gains.\nPREDICTION: Params about −8.8k. The rare-token bucket shows no regression at step 100.\nTEST: Run the step-100 matched loss split by frequency bucket against the full-scalar version.\nSOURCE: own\nPART: State across depth: normalization placement and initialization\nKIND: port\n\nSLOT: port\nIDEA: Learned scalar on the embedding stream input\nMECHANISM: Multiply `tok(idx)` by one no-decay scalar initialized so the 4-stream input RMS is about 1, instead of std 0.02. This targets the tiny raw-embedding stream that is the likely cause of the 7× layer-0 gradient.\nPREDICTION: The layer-0 attention gradient ratio drops from about 10× toward 2×. Step-100 loss is within ±0.02 or better.\nTEST: A 100-step smoke logging per-layer attention gradient norms.\nSOURCE: own\nPART: Embedding / input stream\nKIND: leap\nBREAKS: The embedding enters the residual stream at its init scale (std 0.02) with no separate learned gain.\nKILL: Step-45 matched loss more than 0.03 above baseline, or layer-0 gradient ratio not below 5×.\n\nSLOT: combine\nIDEA: Gemma-style (1+w) scalars\nMECHANISM: Parametrize each scalar as c·(1 + w) with w = 0 at init and normal wd 0.1. Decay then pulls toward the chosen temperature c (1.4 for attention, 1.0 elsewhere) instead of toward zero, so `build_optimizers` needs no edit.\nPREDICTION: End-of-run scalars stay within 0.7–1.5 of c. The final loss matches the no-decay variant within 0.005.\nTEST: A 500-step run comparing scalar trajectories against the plain-scalar build.\nSOURCE: https://github.com/huggingface/transformers/blob/main/src/transformers/models/gemma/modeling_gemma.py\nPART: State across depth: normalization placement and initialization\nKIND: port\n\nOPEN:\n- Do 3 end-of-run baseline checkpoints exist? | build: yes | decides: offline measurement vs 3 baseline reruns with a `norm_stats` dump\n- What is the actual end mean and plain/robust CV of n1, n2, latent, gq⊙gk and final, per layer and per seed? | build: yes | decides: scalar per norm vs keep vector for specific norms\n- What is the Δ train loss from mean-ablating the final gain, split by frequency bucket? | build: yes | decides: final as scalar vs final keeps its 384-wide gain\n- What is the Δ train loss from mean-ablating gq⊙gk per layer? | build: yes | decides: one content temperature per layer vs keep the per-dim q/k gains\n- Are the baseline means near 0.681 (decay-set) or above 1 (gradient-set)? | build: yes | decides: wd 0.1 on scalars vs a no-decay group or (1+w)\n- Which exact set of norms is intended, given that −9,560 matches no set? | build: yes | decides: 25-scalar set vs 37-scalar set including the q temperature\n- What is the L5 quantity, given that the field is malformed? | build: no | decides: keep L5 as a target vs drop it from the chain\n\nLINK STATUS:\n- L1: open | Arithmetic is settled (25 scalars → −9,575; 37 → −10,331; shared q/k per layer → −11,099; 61 → −12,611), but the intended set is undefined and must include a q-side temperature for L2.\n- L2: open | No entropy measurement. The scalar must sit on q_c (q_norm), not n1, or it only rescales the rotary logits. The init effect fades by about step 150, so the step-100 test is valid but says little about the final loss.\n- L3: open | No final-gain ablation yet. Settled by mean-ablating g_final on train-shard frequency buckets (Q6).\n- L4: open | As stated, \"expect CV < 0.15\" sits on the noise floor (0.10–0.15, and 0.14–0.18 for gq⊙gk). It needs restating as mean-ablation Δloss plus an outlier-channel count before it can be refuted.\n- L5: open | The quantity field is malformed and nothing was measured.\n- L6: open | No seeds run, and the pooled exam baseline mean is not given.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 11747,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 13961,
+  "total_tokens": 27278
+ },
+ "cost_usd": 1.145176,
+ "duration_ms": 166437,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 27278,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "depth_norm_init-in-k05",
+  "seed": "",
+  "note": "interrogating 'No-affine norms with scalar temperature' gen 0 depth 2: What are the end-of-run mean and CV per vector of n1, n2, la",
+  "node": "depth_norm_init",
+  "depth": 2,
+  "gen": 0
+ },
+ "prompt_chars": 32403,
+ "raw": {
+  "duration_api_ms": 165051,
+  "stop_reason": "end_turn",
+  "session_id": "af9d7bc7-c7a5-44b3-8dd2-ba3ce1c2f127",
+  "total_cost_usd": 0.3469496,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13961,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 11747,
+   "output_tokens_details": {
+    "thinking_tokens": 6505
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13961,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 11747,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 13961,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13961
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 11747,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 13961,
+    "webSearchRequests": 0,
+    "costUSD": 0.3469496,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 6505,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 165151,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 11747,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13961,
+    "total_tokens": 27278
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 11747,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13961,
+    "total_tokens": 27278
+   },
+   "source": "usage"
+  }
+ }
+}

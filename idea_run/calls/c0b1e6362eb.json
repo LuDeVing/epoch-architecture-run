@@ -1,0 +1,110 @@
+{
+ "call_id": "c0b1e6362eb",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll write the seed scratch first, then seven sketches: five leaps (two from the remeasure operator) plus one port and one tune.\n\nPASS 1 (scratch):\n\nConstants this part inherited from elsewhere: rotary base 10000 (LLaMA at 2048 to 4096 context); rotary width 32 of a 64 head (DeepSeek-V2's 64 of 128); SDPA scale 1/sqrt(96) (Vaswani, assumes unnormalized unit-variance entries); QK-norm gain init 1.0 with AdamW decay 0.1 pulling it toward 0; a single rotary key shared across heads (V2's MQA-style key, built for 128 heads); rotary key read from x rather than the latent; rotary q and k left un-normed while content is normed; latent 128, eps 1e-6, 6 heads of 64. Picked two: theta and the attention temperature.\n\nTwelve seeds, one rule each:\n1. Theta is inherited from 4k context. Derive it from 1024: 7 of 16 rotary pairs never finish a turn, 4 turn under 1 rad. Derived theta about 480.\n2. The only temperature knob is 128 weight-decayed gains whose regularizer fixed point is uniform attention. Reparametrize so decay returns to the derived scale, add a per-head log-temperature.\n3. Content and position must be disjoint channels. Only KV absorption at inference needs that. Rotate 16 content dims, delete the rotary projection and the 32 rotary q dims per head.\n4. One scale governs both channels. Norm the rotary logit too and give position and content separate learned gains.\n5. Every layer sees the same spectrum. Give early layers short wavelengths and deep layers long ones.\n6. Values carry no position. Rotate values by j and un-rotate the output by i, so outputs encode the offset of what was attended.\n7. The rotary key is a function of the current token only. Build it from a 2-tap causal conv so positional keys mark bigram boundaries.\n8. Scale is constant in query position. SSMax: s_h log(t+1).\n9. One rotary key serves all heads. Per-head rotary keys.\n10. No output gate. Post-SDPA sigmoid gate.\n11. All heads are global. Half the heads windowed at 64 with no rotary dims, half global.\n12. A token's own key is always in its attention set. Drop the diagonal and make the no-op an explicit learned null key.\n\nKept 1 and 2 as the operator's remeasure leaps, and 3, 6, 12 as the three farthest from the brief, the digest and each other. 10 and 9 appear as a port and a tune.\n\nIDEA: Spectrum re-derived from the context, theta 10000 to 480\nMECHANISM: With theta 10000 and 16 rotary pairs, pair i has wavelength 2π·10000^(i/16): pairs 9 to 15 never complete a turn in 1024 tokens and pairs 12 to 15 rotate under 1.0 rad end to end, so 8 of the 32 positional dims are a constant vector, i.e. an un-normed 8-dim content key shared across heads that duplicates the 64 content dims. Setting the lowest wavelength to 2048 gives theta = (2048/2π)^(16/15) ≈ 480, so all 16 pairs span wavelengths 6 to 2048 log-spaced and the 64 to 2048 band, where the current spectrum has only 3 pairs, gets 7; a learned log-frequency per pair initialized at this spectrum is the scheduled version.\nPREDICTION: Parameters unchanged (or +16 per layer if frequencies are learned), step time unchanged, loss at positions 256 to 1024 lower by 0.01 to 0.02 nats, early loss curve ahead of baseline from the first 100 steps because mid-range offsets become resolvable.\nTEST: 45-step matched smoke runs at theta in {200, 480, 2000, 10000}, same seed and data order; then one 50M run at theta 480 if the curve separates. Position-bucketed loss on the self-report split shows where the gain lands.\nSOURCE: own; the diagnosis extends https://arxiv.org/abs/2607.10134 (LeRoPE's high-norm positional band)\nTARGET: loss at late positions, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The rotary base is a constant that scales up with context and never needs to be scaled down when the context is 1024.\nKEEPS: Decoupled 32-dim rotary key, QK-norm, head count, SDPA scale, same apply_rope.\nP_SUCCESS: 0.2\nKILL: Mean loss over steps 40 to 45 at theta 480 above the baseline's by 0.02 or more, or every theta in the sweep within noise of each other (then frequencies do not matter at this budget).\n\nIDEA: Decay-proof temperature: per-head log-scale with unit fixed point\nMECHANISM: After RMSNorm the content logit has std 0.82·g_q·g_k and the measured max logit 22.7 needs g_q·g_k ≈ 3.5, so the deep layers grew their gains to about 1.9 each while AdamW with weight decay 0.1 pulls every gain toward 0, i.e. toward uniform attention, at 3e-4 per step for 1525 steps. Replace the gains by exp(γ) per dim so decay returns them to the derived value 1, and add one per-head log-temperature τ_h in the SDPA scale, exp(τ_h)/sqrt(96), soft-clipped to [−1, 2], so sharpening is a 6-parameter decision per layer that the regularizer does not fight.\nPREDICTION: Parameters change by +72; step time unchanged; max attention logit in layers 8 to 12 exceeds the baseline's by step 300 and deep-layer entropy drops earlier; final loss 0.005 to 0.015 lower. If the gain was never regularizer-limited, τ stays near 0 and the curves coincide.\nTEST: Dump q_norm and k_norm gain norms per layer from the baseline checkpoint: if the sharp layers sit near 1.9 and the others near 1.0, the decay is binding. Then 45-step matched smoke; then 3 seeds.\nSOURCE: own; the learnable-g idea is in https://arxiv.org/pdf/2010.04245, the clipping warning in https://arxiv.org/pdf/2310.12956\nTARGET: max attention logit, up in deep layers; attention entropy in deep layers, down earlier\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Attention temperature is a side effect of 128 per-dim gains whose weight-decay fixed point is uniform attention.\nKEEPS: QK RMSNorm, 1/sqrt(96) as the unit scale, AdamW grouping and decay untouched (the reparametrization moves the fixed point, not the optimizer).\nP_SUCCESS: 0.18\nKILL: Baseline gain norms within 1.15 of 1.0 in every layer (decay was not binding), or 45-step loss above baseline by 0.02.\n\nIDEA: Re-entangle: RoPE on 16 content dims, delete the decoupled key\nMECHANISM: Decoupled RoPE exists so the latent can be absorbed into the query at inference with a cache; this script never runs with a cache, so the 32 rotary q dims per head plus the shared rotary projection are a cost paid for nothing. Remove Attention.rotary and the rotary slice of wq, apply RoPE to 16 of the 64 content dims of q and k after q_norm and k_norm (rotation preserves the norm, so QK-norm still holds), with the theta-480 spectrum over 8 pairs; positional keys become per-head and content-dependent through the latent.\nPREDICTION: Non-embedding parameters fall by 86,016 per layer, 1.03M total; SDPA head dim 96 to 64 cuts attention-score compute by a third, about 3 percent of the step; loss equal to or 0.005 below baseline, which counts because fewer parameters are always allowed.\nTEST: Parameter count by --build-only (20.21M expected); 3-step timing; 45-step matched smoke; the partial-RoPE paper's finding that 10 percent of dims suffice says 25 percent should not hurt.\nSOURCE: own; builds on https://arxiv.org/abs/2603.11611 and the open item in https://arxiv.org/pdf/2503.11486\nTARGET: validation loss only, with step time down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Position and content must live in disjoint channels because MLA's inference-time absorption requires it.\nKEEPS: Latent KV compression, QK-norm, 6 heads of 64, output projection, causal SDPA.\nP_SUCCESS: 0.15\nKILL: 45-step loss above baseline by 0.03, which would mean the full-rank x-to-rotary path, not the decoupling, is what the keys needed.\n\nIDEA: Offset-aware values: rotate values by j, un-rotate output by i\nMECHANISM: Attention output is position-blind: a head that retrieves a token cannot tell the MLP whether it came from 1 or 500 positions back, so distance must be re-derived by another head. Apply RoPE to 16 of the 64 value dims with the longest 8 wavelengths (32 to 2048) and apply the inverse rotation at the query position to the SDPA output, so y_i = Σ a_ij R(j−i) v_j and the output carries the attended offset in phase.\nPREDICTION: Zero parameters, two extra (B,H,T,16) rotations per layer, under 1 percent step time; recall-token loss and loss at late positions lower by 0.01; early curve unchanged for the first 100 steps because the phase channel starts unused.\nTEST: 3-step timing, 45-step matched smoke, then one full run with the position-bucketed self-report. A synthetic check: train 200 steps and probe whether a linear read of the 16 value dims predicts the attended offset.\nSOURCE: own\nTARGET: recall-token loss, down; loss at late positions, down\nSCOPE: validation loss at 1024, and more at long context\nKIND: leap\nBREAKS: Values carry no positional information and the attention output is a position-free mixture.\nKEEPS: Keys and queries as they are, softmax, causal mask, same frequencies, un-rotated 48 value dims.\nP_SUCCESS: 0.1\nKILL: 45-step loss above baseline by 0.02, or the offset probe at 200 steps no better than chance.\n\nIDEA: No self-key: drop the diagonal and make the no-op an explicit null key\nMECHANISM: First-token mass is under 0.6 percent, so the no-op in this recipe is most likely the self position: a head that wants to do nothing attends to its own value, which the residual already carries, and the self logit inflates the softmax denominator and cools attention over real context. Mask the diagonal and prepend one learned null key per head with a zero value, so doing nothing is a single logit that is position- and content-free and every unit of context mass is real retrieval.\nPREDICTION: Parameters +6×96 per layer; attn_mask path instead of is_causal costs up to 30 percent on attention, about 3 to 5 percent of the step; deep-layer entropy over real keys drops, attention mass to the null key tracks what diagonal mass used to be, loss 0.005 to 0.01 lower.\nTEST: Free first: measure diagonal attention mass per layer on the baseline checkpoint. Then 3-step timing and a 45-step matched smoke.\nSOURCE: own; the sink half contrasts with the negative result in https://arxiv.org/pdf/2606.13392 and MiMo's positive one in https://arxiv.org/html/2601.02780v1\nTARGET: attention entropy in deep layers, down over real keys; first-token attention mass, unchanged\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every token's own key is in its attention set and serves as the free no-op.\nKEEPS: Causal ordering, softmax, head count, QK-norm, decoupled RoPE.\nP_SUCCESS: 0.1\nKILL: Baseline diagonal mass below 5 percent in layers 8 to 12 (there is no self no-op to remove), or 45-step loss above baseline by 0.03.\n\nIDEA: Post-SDPA sigmoid output gate per head\nMECHANISM: A query-dependent sigmoid gate on the attention output adds nonlinearity after the softmax mixture and gives heads a content-based way to zero their contribution, which the Qwen study found removes sinks and massive activations; at 21M it also lets the deep layers reach entropy 0.67 only on the heads that need it. Gate from x with a 384-to-384 projection, elementwise, before wo.\nPREDICTION: Parameters +147,456 per layer, +1.77M total, 8.3 percent and under the 10 percent cap; step time +2 to 3 percent; residual RMS growth and max attention logit lower; loss 0.005 to 0.01 lower.\nTEST: --build-only count (23.01M expected), 3-step timing, 45-step matched smoke; the cheap control is a per-head gate of 384-to-6 (+2,304 per layer) to see whether the elementwise form is where the gain is.\nSOURCE: https://proceedings.neurips.cc/paper_files/paper/2025/hash/904e89bb4e632e75fb47f093b620b257-Abstract-Conference.html\nTARGET: residual RMS growth, down; max attention logit, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Per-head rotary keys instead of one shared key\nMECHANISM: One 32-dim rotary key for 6 heads was chosen for 128-head DeepSeek, where sharing is cheap; here each head's positional selectivity comes only from its own qr against a key all heads share, so content-gated positional patterns differ per head only through the query. Widen Attention.rotary from 32 to 6×32 and drop the expand in the concat.\nPREDICTION: Parameters +61,440 per layer, +0.74M total; step time unchanged; loss 0.003 to 0.008 lower, larger if heads specialize to different offsets.\nTEST: Sweep rotary key heads in {1, 2, 6} on 45-step matched smoke runs; count by --build-only.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nRecommended order: run the two free diagnostics first, the per-layer gain norms and the diagonal attention mass on the baseline checkpoint, since each can kill a leap before any training. Then the theta sweep and the re-entangle run, which cost nothing in parameters and are the two most likely to clear 0.005 nats.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 18459,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20172,
+  "total_tokens": 42060
+ },
+ "cost_usd": 1.885675,
+ "duration_ms": 272018,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 42060,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "lock",
+  "note": "Sequence mixing: decoupled rotary dims and QK-norm / outward / research",
+  "node": "attn_rope_norm",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46052,
+ "raw": {
+  "duration_api_ms": 270544,
+  "stop_reason": "end_turn",
+  "session_id": "5a256c0f-fc43-4351-a4b0-f57b3585fc3d",
+  "total_cost_usd": 1.32726675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20172,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 18459,
+   "output_tokens_details": {
+    "thinking_tokens": 13394
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20172,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 18459,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20172,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20172
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 18459,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20172,
+    "webSearchRequests": 0,
+    "costUSD": 1.32726675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 13394,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 270692,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 18459,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20172,
+    "total_tokens": 42060
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 18459,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20172,
+    "total_tokens": 42060
+   },
+   "source": "usage"
+  }
+ }
+}

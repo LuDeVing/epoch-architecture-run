@@ -1,0 +1,105 @@
+{
+ "call_id": "c7ff5ad605b",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n{\"name\":\"Token-conditional gated latent\",\"members\":[\"s457e0ed275\",\"s991a7c939c\",\"s368dcc2880\",\"s75b7d6aa2e\"]},\n{\"name\":\"Gated latent plus attention output gate\",\"members\":[\"sf8cfc2ca4c\",\"s35d1102380\",\"s67c0537719\"]},\n{\"name\":\"Gated expansion of K/V\",\"members\":[\"sd10ade3d00\",\"sebdec86283\"]},\n{\"name\":\"Per-head gates over shared latent\",\"members\":[\"sc9319d736c\"]},\n{\"name\":\"Top-k sparse latent\",\"members\":[\"s2120347f98\",\"s212ca28995\"]},\n{\"name\":\"Previous-token shift in latent\",\"members\":[\"s2996e9233a\",\"sa03bf36b41\",\"sb39f34a405\"]},\n{\"name\":\"Token-dependent stream read\",\"members\":[\"s1344557338\",\"se11950c12b\",\"sd74b9da107\"]},\n{\"name\":\"Rope width sweep\",\"members\":[\"s3b8587eaad\"]},\n{\"name\":\"Rotary init scale\",\"members\":[\"s71d6cb6f00\"]},\n{\"name\":\"Normalized rope slice\",\"members\":[\"sc155120cb9\"]},\n{\"name\":\"Narrow keys, wide values\",\"members\":[\"s05a7731c77\"]},\n{\"name\":\"Global KV codebook\",\"members\":[\"s0b1f60fd9a\"]},\n{\"name\":\"Per-head value withhold gate\",\"members\":[\"s415be5a4ed\"]},\n{\"name\":\"Learned latent sink register\",\"members\":[\"s369734243c\"]},\n{\"name\":\"Per-head low-rank K/V residual\",\"members\":[\"sed5950f589\"]},\n{\"name\":\"Query scored against latent\",\"members\":[\"s18eedb7891\"]},\n{\"name\":\"Prefix-conditioned keys\",\"members\":[\"s21aec0ff10\"]},\n{\"name\":\"Uncompressed K/V in layer 0\",\"members\":[\"sb8dd66969c\"]},\n{\"name\":\"Successor-value heads\",\"members\":[\"s10bec45c74\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 1515,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 4402,
+  "total_tokens": 7487
+ },
+ "cost_usd": 0.039709,
+ "duration_ms": 12397,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 7487,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_latent_kv/inward, 30 sketches"
+ },
+ "prompt_chars": 10712,
+ "raw": {
+  "duration_api_ms": 10895,
+  "stop_reason": "end_turn",
+  "session_id": "934be9d4-fa50-4725-ace6-6a78dd6b2eda",
+  "total_cost_usd": 0.0329188,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 4402,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 1515,
+   "output_tokens_details": {
+    "thinking_tokens": 850
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 4402,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1515,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 4402,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 4402
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 1515,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 4402,
+    "webSearchRequests": 0,
+    "costUSD": 0.0329188,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 850,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 11066,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 1515,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 4402,
+    "total_tokens": 7487
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 1515,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 4402,
+    "total_tokens": 7487
+   },
+   "source": "usage"
+  }
+ }
+}

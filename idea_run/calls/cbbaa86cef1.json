@@ -1,0 +1,110 @@
+{
+ "call_id": "cbbaa86cef1",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "QUESTIONS, aimed at the weakest links first. Each question changes how the idea is built, and each names the two build choices it decides:\n\nQ1: Does the size of the Muon update on `read_logits` depend on the size of its gradient at all? | decides: L2 measured as logit movement vs L2 measured as a signal test such as update sign-consistency\nA1: No. `newton_schulz5` divides by the Frobenius norm and then orthogonalises, so every step's update has singular values of roughly 0.5–1.5 (https://kellerjordan.github.io/posts/muon/), and `scale = max(1, 2/4)**0.5 = 1`. The step is about `lr·m·(1–1.4)` in Frobenius norm whether the gradient is 1e-2 or 1e-6. Only a gradient with norm near the `1e-7` eps gets damped.\n\nQ2: What is the lr-integrated movement budget at step 100 and at the end? | decides: smoke length of 45 steps vs 100+ steps for any read-movement check\nA2: The run is 1525 steps, warm=30, cool_start=1067. Σ multiplier is 15.5+70 = 85.5 by step 100, giving Σlr = 1.71. Over the whole run it is 15.5+1037+229.5 = 1282, giving Σlr = 25.6. At 45 steps Σlr is only about 0.65, so a 45-step sweep sees at most a third of the step-100 movement.\n\nQ3: What is the ceiling on read movement if the gradient direction were perfectly consistent? | decides: bounded read (clamp or decay-only) vs free read\nA3: The softmax gradient has zero row sum, so each update row is orthogonal to 1. The most a unit row can put on one entry is √(3/4) = 0.87. The ceiling is therefore about 1.5 logit units on the favoured entry by step 100, which gives a weight of about 0.70, i.e. max |w−0.25| ≈ 0.45. Under weight decay the equilibrium is |p| ≈ 0.87/0.1 ≈ 8.7, and 1−e^(−0.1·25.6) = 92% of it is reached by the end, which means near one-hot reads.\n\nQ4: Is the read gradient direction consistent (signal) or noise? | decides: keep reads on Muon vs move them to AdamW (Adam shrinks zero-mean gradients, Muon does not)\nA4: Unknown. At init the gradient is proportional to `<x_j − x̄, G>`, and the stream differences come from 2% write asymmetry plus bf16 rounding, so noise is plausible. If it is noise, Muon still takes full-size steps, and momentum 0.95 (persistence ≈ 20 steps) makes this a correlated random walk. My estimate (belief) is about 0.2–0.4 per entry by step 100, i.e. |w−0.25| ≈ 0.04–0.08, and an Ornstein–Uhlenbeck std of about 0.9 per entry by the end, i.e. |w−0.25| ≈ 0.15–0.2.\n\nQ5: Do `write_logits`, also 2-D on Muon, move just as fast and make the \"2% asymmetry\" an init-only fact? | decides: keep write logits on Muon vs freeze them or move them to AdamW to isolate the mixing effect\nA5: Yes, the same arithmetic applies. By step 100 the write logits can move by up to about ±1.5, so gains of 1.015/0.995 can become roughly 1.6/0.4. Even a noise walk of ±0.3 gives gains of about 1.15/0.85. Stream differences will be set by Muon's write drift within tens of steps, not by the init.\n\nQ6: Does read row 0 of block 0 (the attention read in the first block) receive any gradient? | decides: include vs exclude it from the L2 max; keep vs drop that parameter\nA6: Its input streams are always identical copies of the embedding, so any convex read gives the same output and its gradient is zero up to rounding. Inside NS5 that row is just a near-zero row of the 2×4 matrix; it is amplified at most about 3.44⁵ ≈ 490× relative, which stays negligible. It is a dead parameter and should be excluded from the 24-stage max (23 live stages).\n\nQ7: Is the stream state bf16, and does that hide small read changes? | decides: measure read weights from the fp32 parameter vs from the forward; keep `combine` in bf16 vs force fp32\nA7: Belief: yes. The `einsum` in `combine` runs under autocast, its inner bmm returns bf16, and `weights.to(x.dtype)` then rounds read weights to bf16. Near 0.25 the bf16 spacing is about 0.001–0.002, so deviations below 0.002 are invisible in the forward pass. The same rounding also turns 2% stream differences into partly quantised noise.\n\nQ8: Does Muon weight decay limit how far the reads and writes can go by the end? | decides: exclude stream gates from weight decay vs keep decay 0.1\nA8: Yes. `p.mul_(1 − lr·0.1)` gives an e-fold time of 500 full-lr steps. A consistent direction saturates at about 8.7 per entry (Q3), and noise settles near ±0.9. Decay does not prevent near one-hot reads if the signal is consistent.\n\nQ9: Does lowering the mix init change how far the reads move? | decides: one shared L2 gate vs a per-init L2 gate\nA9: Not in magnitude, since Muon fixes the step size. It can change direction consistency: more exchange makes the streams more alike, so `x_j − x̄` shrinks toward rounding noise. Low inits are therefore more likely to show large but random read movement. Unknown until measured.\n\nQ10: Can gradient clipping or the Muon eps stop read movement? | decides: logging the read-gradient norm vs not\nA10: Clipping rescales the gradient, but NS5 then normalises it again, so clipping has no effect on direction. Only a read-gradient norm below about 1e-7 after clipping would shrink the step. That seems unlikely but is unmeasured, so log `‖grad(read_logits)‖` per stage.\n\nKNOWN:\n- `read_logits` (2,4) and `write_logits` (2,4) are on Muon at lr 0.02, wd 0.1, momentum 0.95, nesterov; the NS5 scale factor is 1 for 2×4. [script]\n- Muon step size is independent of gradient magnitude above about 1e-7 Frobenius norm; NS5 singular values are about 0.5–1.5, https://kellerjordan.github.io/posts/muon/ [web]\n- Σlr: 1.71 by step 100, 0.65 by step 45, 25.6 over 1525 steps (warm 30, cooldown from 1067). [script]\n- Ceiling on a single read logit: about 1.5 by step 100 (|w−0.25| ≤ 0.45), and about 8 by the end with decay (equilibrium 8.7). [belief]\n- Noise-only random walk: about 0.2–0.4 per entry by step 100 (|w−0.25| ≈ 0.04–0.08) and about ±0.9 by the end. [belief]\n- Read row 0 of block 0 is dead: its streams are identical forever, so its gradient is about 0. Exclude it from L2. [script]\n- Write gains also move at the Muon rate, so the 1.015/0.995 asymmetry holds only for the first few steps. [belief]\n- Stream state is bf16 after the first `combine`. Read weights near 0.25 are quantised to about 0.001–0.002 steps in the forward. [belief]\n- Step-0 off-diagonal mass 3b: 0.74% at init 6, 13.0% at 3, 28.9% at 2, 52.5% at 1. A uniform-row init is already doubly stochastic. [script]\n- `mix_logits` on AdamW moves at most about 3.84 logit units over the run (Σlr 1282 × 3e-3); decay alone takes a diagonal of 6 to about 4.1. [script]\n- What to log every 10 steps: fp32 `softmax(read_logits)` and `2·sigmoid(write_logits)` per stage, read-gradient norm, and the cosine between successive read updates. [belief]\n\nASSUMES:\n- Read and write gates belong on Muon like weight matrices, not on AdamW.\n- Read weights are convex (softmax, sum to 1).\n- Logit movement means the mixing affects the loss, i.e. movement is signal, not optimiser-forced noise.\n- Write asymmetry stays near 2%, so stream spread starts small.\n- Stream differences survive bf16 storage.\n- A 45-step smoke is long enough to rank mixing inits.\n- Weight decay on the stream gates is harmless.\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Stream gates on AdamW\nMECHANISM: Moving `read_logits` and `write_logits` from Muon to AdamW (lr 3e-3, wd 0) replaces fixed-size normalised steps with Adam's per-element signal-to-noise scaling, so gates drift only when the gradient has a consistent sign.\nPREDICTION: Read |w−0.25| stays below 0.02 by step 100 when the gradient is noise; the loss is equal or slightly better.\nTEST: 100-step smoke for both optimiser placements on 2 seeds; compare read deviation and step-100 train loss.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: strengthen\nIDEA: Fixed-sum rotating writes\nMECHANISM: Parameterise writes as 4·softmax(write_logits) so the total write into the mean stays exactly 4, and init the favoured logit at +2, rotating which stream is favoured with (2·layer+stage) mod 4. Streams then differ by O(1) instead of 2%, and all four get used.\nPREDICTION: Block-11 spread ratio is at least 0.3 at step 100; mean-stream RMS is within 3% of control; the read gradient is consistent (update cosine above 0.5).\nTEST: 100-step smoke logging spread ratio and update cosine.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: specialise\nIDEA: Gate warm-freeze\nMECHANISM: Hold `read_logits` and `write_logits` at their init for the first 150 steps (the warmup plus early phase, when stream differences are mostly rounding) and unfreeze them afterwards, so Muon cannot lock in noise-driven read biases early.\nPREDICTION: End read deviation is lower and more consistent across seeds; exam loss matches or beats control.\nTEST: 3-seed full run compared with control on the across-seed spread of final read weights.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: port\nIDEA: Learned output read\nMECHANISM: Replace `x.mean(dim=2)` before the final norm with a learned softmax read over streams (4 params, AdamW), so the head can choose the stream that the writes have specialised.\nPREDICTION: The output read leaves uniform only if streams specialise; zero parameter cost.\nTEST: 100-step smoke checking output-read deviation alongside step-100 loss.\nSOURCE: own\nPART: Output head readout\nKIND: port\n\nSLOT: combine\nIDEA: Dynamic read on top of static Sinkhorn\nMECHANISM: Add the dynamic-HC per-token read term tanh(norm(x)·W)·s, with W of shape d×4 per stage and s initialised to 0, to the static read logits. This adds 384·4·24 ≈ 37k parameters, within C3.\nPREDICTION: The dynamic term gives token-dependent stream selection, the part where dynamic HC beat static HC (2.781 vs 2.791 on OLMo-1B).\nTEST: 3-seed full run against the static-read control.\nSOURCE: https://arxiv.org/pdf/2409.19606\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: other\nIDEA: Signed difference reads\nMECHANISM: Replace softmax reads with unconstrained linear read weights initialised to 0.25 (AdamW, no decay), so a read can take x_i − x_j and the four streams act as a difference-carrying memory instead of a convex average.\nPREDICTION: Some stages learn negative weights; the exam loss improves if streams carry distinct content.\nTEST: 100-step smoke against control.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: leap\nBREAKS: reads are convex combinations summing to 1\nKILL: step-100 train loss more than 0.02 above control, or any stage with |Σw| > 1.5\n\nOPEN:\n- Is the read update direction consistent across steps (cosine of successive Muon updates above 0.5) or a noise walk? | build: yes | decides: reads on Muon vs on AdamW\n- What is the read-gradient Frobenius norm per stage relative to the 1e-7 eps? | build: no | decides: logging only vs eps change\n- How far do write gains actually drift by step 100 under Muon? | build: yes | decides: L3 baseline taken at init vs measured at step 100\n- Does bf16 stream storage erase stream differences below about 0.4%? | build: yes | decides: bf16 `combine` vs fp32 `combine`\n- Do read weights end near one-hot (|logit| > 5) under a consistent signal? | build: yes | decides: decay on gates vs clamped or no-decay gates\n- Does lower mix init make read movement more random? | build: yes | decides: shared vs per-init L2 gate\n- Do init-2 mix logits re-sharpen above 4? | build: yes | decides: init 2 vs init 3\n\nLINK STATUS:\n- L1: open | The step-0 values (0.74/13/29/52%) are confirmed by arithmetic. The end-of-run values and re-sharpening are unmeasured, and AdamW can move a logit by up to about 3.8 in either direction.\n- L2: open | Muon forces read movement regardless of signal, so passing \"above 0.02\" is near-certain and \"above 0.05 by step 100\" falls in the 0.04–0.45 range depending on consistency. The breaks_if condition is nearly unreachable, so the link cannot show that mixing affects the loss without an update-consistency test.\n- L3: open | Its premise of \"2% asymmetry\" holds only at init: write gates on Muon drift at the same fixed rate, so spread is set by that drift.\n- L4: open | The column-sum invariance is confirmed, but mean-stream RMS also depends on Σ write gains, which Muon moves, so \"mean unchanged\" does not follow from the mixing alone.\n- L5: open | No exam runs yet; the prior from the 30M nanoGPT result is parity (https://arxiv.org/pdf/2604.02309).",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 16147,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 12883,
+  "total_tokens": 30600
+ },
+ "cost_usd": 1.454963,
+ "duration_ms": 212156,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 30600,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "depth_stream_mix-in-k06",
+  "seed": "",
+  "note": "interrogating 'Lower mixing logit init (less identity)' gen 0 depth 1: How far do the read logits on Muon actually move by step 100",
+  "node": "depth_stream_mix",
+  "depth": 1,
+  "gen": 0
+ },
+ "prompt_chars": 29605,
+ "raw": {
+  "duration_api_ms": 210745,
+  "stop_reason": "end_turn",
+  "session_id": "43296467-08cf-495d-9ca0-b314616a7d77",
+  "total_cost_usd": 0.4263256,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 12883,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 16147,
+   "output_tokens_details": {
+    "thinking_tokens": 10994
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 12883,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 16147,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 12883,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 12883
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 16147,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 12883,
+    "webSearchRequests": 0,
+    "costUSD": 0.4263256,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 10994,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 210838,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 16147,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12883,
+    "total_tokens": 30600
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 16147,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 12883,
+    "total_tokens": 30600
+   },
+   "source": "usage"
+  }
+ }
+}

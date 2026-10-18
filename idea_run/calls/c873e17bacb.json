@@ -1,0 +1,105 @@
+{
+ "call_id": "c873e17bacb",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"id\":\"attn_heads_outpu-in-k00\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"attn_heads_outpu-in-k03\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"attn_heads_outpu-in-k11\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"attn_heads_outpu-in-k13\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"attn_heads_outpu-ou-k00\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"attn_heads_outpu-ou-k07\",\"tag\":\"new\",\"match\":\"\"},\n{\"id\":\"attn_heads_outpu-ou-k08\",\"tag\":\"new\",\"match\":\"\"}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 225,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2496,
+  "total_tokens": 4291
+ },
+ "cost_usd": 0.013211,
+ "duration_ms": 4364,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 4291,
+ "over_cap": false,
+ "meta": {
+  "card": "prior",
+  "note": "prior-art tags for attn_heads_outpu: 7 new clusters"
+ },
+ "prompt_chars": 5203,
+ "raw": {
+  "duration_api_ms": 2779,
+  "stop_reason": "end_turn",
+  "session_id": "e4abe875-555d-4dfe-9c20-9b1781d52946",
+  "total_cost_usd": 0.0123948,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2496,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 225,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2496,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 225,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2496,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2496
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 225,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2496,
+    "webSearchRequests": 0,
+    "costUSD": 0.0123948,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 2843,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 225,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2496,
+    "total_tokens": 4291
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 225,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2496,
+    "total_tokens": 4291
+   },
+   "source": "usage"
+  }
+ }
+}

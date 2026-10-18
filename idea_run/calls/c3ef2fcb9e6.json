@@ -1,0 +1,105 @@
+{
+ "call_id": "c3ef2fcb9e6",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n[\"attn_heads_outpu-in-k00\",\"attn_heads_outpu-ou-k05\",\"attn_latent_kv-in-k13\"],\n[\"attn_rope_norm-in-k07\",\"attn_heads_outpu-in-k08\",\"attn_rope_norm-ou-k03\"],\n[\"attn_rope_norm-in-k10\",\"attn_heads_outpu-in-k12\",\"attn_heads_outpu-ou-k01\",\"attn_rope_norm-ou-k04\"],\n[\"attn_rope_norm-in-k01\",\"attn_rope_norm-ou-k02\",\"attn_heads_outpu-in-k05\"],\n[\"attn_rope_norm-in-k03\",\"attn_latent_kv-in-k05\",\"io_embed_head-in-k16\"],\n[\"mlp_swiglu-in-k02\",\"mlp_swiglu-ou-k16\"],\n[\"attn_latent_kv-ou-k06\",\"attn_heads_outpu-in-k01\"],\n[\"attn_rope_norm-in-k00\",\"attn_latent_kv-in-k09\",\"depth_norm_init-in-k12\",\"attn_rope_norm-ou-k07\"],\n[\"depth_norm_init-in-k13\",\"attn_rope_norm-ou-k06\"],\n[\"attn_latent_kv-in-k14\",\"attn_latent_kv-ou-k05\"],\n[\"attn_latent_kv-in-k10\",\"attn_latent_kv-ou-k03\"],\n[\"attn_heads_outpu-in-k03\",\"attn_latent_kv-ou-k02\"],\n[\"attn_heads_outpu-in-k02\",\"attn_heads_outpu-ou-k06\"],\n[\"io_embed_head-in-k01\",\"io_embed_head-ou-k02\"],\n[\"io_embed_head-in-k04\",\"io_embed_head-ou-k01\"],\n[\"io_embed_head-in-k12\",\"io_embed_head-ou-k05\"],\n[\"io_embed_head-in-k05\",\"io_embed_head-ou-k00\"],\n[\"io_embed_head-ou-k03\",\"depth_norm_init-ou-k02\",\"depth_norm_init-in-k06\"],\n[\"io_embed_head-in-k07\",\"depth_norm_init-in-k00\",\"depth_stream_mix-in-k07\",\"mlp_swiglu-ou-k06\"],\n[\"io_embed_head-in-k10\",\"depth_stream_mix-in-k06\",\"depth_norm_init-ou-k00\"],\n[\"depth_stream_mix-in-k01\",\"depth_norm_init-in-k04\",\"depth_norm_init-ou-k01\"],\n[\"depth_stream_mix-in-k02\",\"depth_stream_mix-ou-k03\"],\n[\"depth_stream_mix-in-k12\",\"depth_stream_mix-ou-k05\"],\n[\"depth_stream_mix-in-k15\",\"depth_stream_mix-ou-k01\"],\n[\"depth_stream_mix-in-k14\",\"attn_latent_kv-in-k06\"],\n[\"depth_stream_mix-ou-k00\",\"depth_layer_stac-ou-k03\"],\n[\"depth_layer_stac-in-k01\",\"depth_layer_stac-ou-k01\"],\n[\"mlp_swiglu-ou-k11\",\"depth_norm_init-ou-k03\"],\n[\"mlp_swiglu-in-k04\",\"mlp_swiglu-ou-k15\"],\n[\"mlp_swiglu-in-k00\",\"mlp_swiglu-ou-k13\"]\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 4614,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 22256,
+  "total_tokens": 28440
+ },
+ "cost_usd": 0.153146,
+ "duration_ms": 30787,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 28440,
+ "over_cap": true,
+ "meta": {
+  "card": "merge",
+  "note": "same idea filed under different parts? 182 clusters"
+ },
+ "prompt_chars": 55036,
+ "raw": {
+  "duration_api_ms": 29628,
+  "stop_reason": "end_turn",
+  "session_id": "ff2474de-a65d-40eb-a4be-504091264fea",
+  "total_cost_usd": 0.1353248,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 22256,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 4614,
+   "output_tokens_details": {
+    "thinking_tokens": 3483
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 22256,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 4614,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 22256,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 22256
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 4614,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 22256,
+    "webSearchRequests": 0,
+    "costUSD": 0.1353248,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 3483,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 29691,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 4614,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 22256,
+    "total_tokens": 28440
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 4614,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 22256,
+    "total_tokens": 28440
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,110 @@
+{
+ "call_id": "c14940564ff",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Below are seven sketches for the latent KV part: four leaps (three built with the import operator, one that flips a listed assumption directly) plus one tune and two ports.\n\nPASS 1 (scratch):\n1. Immunology, central tolerance: keys/values at slot t come from token t-1 and slot 0 is a learned sink, so no token attends to itself.\n2. Signal processing, automatic gain control: replace the per-token latent RMSNorm with a causal running-RMS divisor, so value loudness is relative to the recent context.\n3. Economics, hedonic pricing: add a query-independent per-key \"price\" scalar as an extra q/k dimension, since QK-norm plus no biases makes the baseline logit a pure match.\n4. Control, observer design: keys from a narrow latent (the measurement), values from a full uncompressed projection (the state that gets transported).\n5. Signal processing, delta modulation: keys from the temporal difference of the latent, values from the latent itself, so keys flag change points.\n6. Ecology, competitive exclusion: each head owns a private latent slice plus a small shared commons, so heads cannot converge on one resource.\n7. Control, leaky integrator: a learned per-dim EMA over time on the latent before expansion.\n8. Economics, progressive taxation: a hashed per-token-ID latent bias so frequent tokens get a cheap content-free KV.\n9. Immunology, affinity maturation: keys refined by a learned correction from the previous layer's latent.\n10. Ecology, succession: latent rank growing with depth at a constant parameter total.\n11. Signal processing, dither: Gaussian noise on the latent during training only.\n12. Economics, public goods: tie value to key (GTA) and spend the freed parameters on queries.\nKept as the three farthest from the brief and from each other: 1, 2, 3. Seed 4 is written as the fourth leap because it flips a listed assumption outright; 5, 7 and 11 are close to Inkling's conv or to regularization, 6, 9, 10 and 12 overlap LRKV, CARE and GTA.\n\nIDEA: Self-tolerant attention (shifted KV with a learned sink slot)\nMECHANISM: Shared structure: the immune system deletes receptors that bind self during maturation, so that detection capacity is spent on foreign material only; here a token's own key is \"self\", and under causal attention it always gets a share of the softmax although its content already sits in the residual and the MLP path. Instantiation: after RoPE, shift k, v and kr right by one position along time, drop the last slot, and put a learned sink row (content key, value, rotary key) in slot 0; SDPA stays is_causal, so token t sees the sink and tokens 0..t-1. This inverts assumption 2 in its implicit form (all keys and values come from the per-token latent of the token at that slot): one row comes from no latent at all, and each latent serves the next token. Where the correspondence breaks: tolerance in biology is permanent, while here the self-content still reaches the output through the residual, so the gain is only the softmax mass no longer wasted on self plus the sink effect MiMo measured.\nPREDICTION: Parameters +9.6k (12 layers x (384 + 384 + 32)); step time unchanged; loss curve below baseline from the first few hundred steps, since the sink effect appears early; first-token attention mass drops in favor of the sink slot.\nTEST: 45 matched steps against the baseline at the same seed and data order; also a 1-step check that the shifted model's loss at step 1 equals the baseline's within noise, which confirms the shift is not corrupting positions.\nSOURCE: own (sink part builds on https://arxiv.org/html/2601.02780v1)\nTARGET: first-token attention mass, down; loss at late positions, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A token's key and value at position t are produced from token t, and every token may attend to itself.\nKEEPS: compress/latent_norm/expand, QK-norm, decoupled RoPE, causal SDPA kernel, all four streams and the Sinkhorn mixing.\nP_SUCCESS: 0.15\nKILL: mean loss over steps 41-45 more than 0.01 nats above the baseline's at the same seed.\n\nIDEA: Causal AGC on the latent instead of per-token RMSNorm\nMECHANISM: Shared structure: a radio receiver's automatic gain control divides the signal by a slow running envelope, so the absolute level is bounded but the modulation survives; dividing each sample by its own magnitude would destroy the message. The latent RMSNorm is exactly per-sample normalization, and the value vectors are the modulation: every token's value leaves expand with the same RMS, so a filler token and a rare content token are equally loud. Instantiation: divide the latent by the square root of the causal running mean of its mean-square over positions 0..t (a cumsum divided by t+1, with the eps floor), keep the learned per-dim weight. Keys are unchanged in effect because the per-head k_norm cancels a scalar gain, so this is a clean experiment on value magnitude alone, which inverts assumption 4 (normalizing the latent before expansion is harmless to value scale). Where it breaks: AGC has a time constant tuned to its carrier, whereas the whole prefix is the envelope here, so the first few positions see a noisy gain and document boundaries inside a window do not reset it.\nPREDICTION: Parameters unchanged; step time +1% (one cumsum per layer); value-norm spread across tokens becomes wide and bimodal within the first 100 steps; rare-token loss falls more than frequent-token loss; nothing else changes at step 1.\nTEST: 45 matched steps; plus a histogram of per-token value norms at step 45 to confirm the spread actually opened (if it stays near uniform the mechanism is inert and the idea is dead regardless of loss).\nSOURCE: own\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every token's latent has unit RMS when it enters the expansion.\nKEEPS: compress and expand shapes, the learned norm weight, k_norm and q_norm, RoPE, SDPA, the block structure.\nP_SUCCESS: 0.12\nKILL: mean loss over steps 41-45 more than 0.01 nats above baseline, or any step in the first 45 more than 0.5 nats above the baseline's matched step (early-envelope instability).\n\nIDEA: Price channel (query-independent per-key salience logit)\nMECHANISM: Shared structure: in hedonic markets a buyer's utility for a good is a match term between the buyer's needs and the good's attributes plus a price term that is independent of the buyer; attention has the match term (query times key) but this recipe has removed the price term, because q_norm and k_norm make the content logit a bounded cosine, RoPE rotates away any constant in the rotary part, and bias=False everywhere means q cannot hold a constant component unless the model sacrifices a residual dimension to a massive activation (which is exactly how sinks form in practice). Instantiation: append 8 dims to q and k so the head dim stays a multiple of 8 (96 to 104); in q the first extra dim is a learned per-head constant and the rest are zero, in k the first extra dim is a per-token scalar s_t produced by a 128-to-6 linear from the latent, so logit_ij = match + c_h * s_j. This inverts assumption 4 (normalization is harmless: it removed the salience channel) and partially assumption 5 (q and kv need not share a subspace, but they must share this one scalar). Where it breaks: market prices are set under competition, while here the salience is trained by the same gradient as everything else, so it may collapse to a constant, in which case it degrades to a per-layer learned sink, which is still useful.\nPREDICTION: Parameters +9.3k; step time within +3% if SDPA keeps its fused kernel at head dim 104; max attention logit grows beyond the cosine bound within the first 200 steps; first-token attention mass falls because salience no longer needs a massive activation.\nTEST: 3-step timing first (a fallback to the math kernel shows as >1.3x step time and must be fixed by repadding before any loss check); then 45 matched steps.\nSOURCE: own\nTARGET: max attention logit, up; first-token attention mass, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The attention logit is a bounded bilinear match between a normalized query and a normalized key with no query-independent term.\nKEEPS: QK-norm on the content dims, decoupled RoPE, SDPA, the latent compression, wo, the block.\nP_SUCCESS: 0.18\nKILL: mean loss over steps 41-45 more than 0.01 nats above baseline, or step time above 1.3x baseline at the 3-step timing.\n\nIDEA: Narrow key latent, full-rank values\nMECHANISM: Shared structure, from observer design in control: the measurement y = Cx can be low-dimensional, since it only has to locate the state, while the state that is propagated must be carried in full. Keys are the measurement (which past token), values are the state (what gets transported through wo into the residual). The baseline compresses both through one 128-dim normed latent, so a layer can move at most 128 independent dims of past content per token no matter how many heads read it: six heads reading 64 dims each are forced to copy correlated content. Instantiation: keys from a 64-dim normed latent (compress 384-to-64, expand 64-to-384) and values from a plain 384-to-384 projection of x with no latent and no norm. This inverts assumption 2 (keys and values should come from the same latent) and assumption 1 (128 is wide enough for the values of six heads). Where it breaks: in an observer the sensor is fixed, whereas here both maps are learned, so the baseline could in principle keep expand low-rank by choice; the test is whether the shared transport bottleneck binds at this budget.\nPREDICTION: Parameters +49k per layer, +0.59M total (under the +2.12M cap); step time +2%; loss at late positions and on recall tokens falls more than overall loss; if instead the 64-dim key latent hurts at step 45, the fallback keeps the 128 key latent and still fits (+1.77M).\nTEST: parameter count from --build-only; 45 matched steps; a 3-step timing.\nSOURCE: own (related open item in https://arxiv.org/pdf/2603.17946)\nTARGET: recall-token loss, down; loss at late positions, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Keys and values share one low-rank latent, so the per-token transport bandwidth of a layer equals the latent rank.\nKEEPS: wq, QK-norm, decoupled RoPE, wo, the six heads, the block and streams.\nP_SUCCESS: 0.2\nKILL: mean loss over steps 41-45 more than 0.01 nats above baseline for both the 64-dim and the 128-dim key-latent variants.\n\nIDEA: Companding eps on the latent norm\nMECHANISM: Raising latent_norm's eps from 1e-6 to the scale of the latent's own mean-square turns the hard per-token normalization into mu-law style companding: tokens with weak latents are attenuated instead of amplified to unit RMS, strong ones saturate. The latent mean-square at init is about 0.15 (weights of std 0.02 on unit-RMS input, 384 fan-in), so eps near 0.1 is the soft regime; this inverts assumption 4 cheaply, and keys are unaffected because k_norm cancels the gain, so the test isolates value scale.\nPREDICTION: Parameters and step time unchanged; loss curve identical for the first 50 steps and diverging later as the latent scale grows under Muon; rare-token loss moves first.\nTEST: 45-step smoke at eps in {0.01, 0.1, 1.0} against baseline; sweep range 1e-2 to 1e0 on a log grid; since Muon grows the latent scale over training, also log the latent mean-square at step 45 to see where eps sits relative to it.\nSOURCE: own\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Per-head low-rank residual on the shared latent (LRKV on top of MLA)\nMECHANISM: Keep the shared normed 128-dim latent for keys and values, and add for each head a rank-16 private path from x (384-to-16-to-64) for its key and for its value, so heads can diverge from the common subspace. This inverts assumption 1 (a 128-dim latent is wide enough for six heads), and tests the open item of LRKV's shared-plus-residual design on a normed latent at 21M.\nPREDICTION: Parameters +86k per layer, +1.03M total; step time +3%; attention entropy in deep layers becomes less uniform across heads (more specialized heads); loss lower from mid-training on.\nTEST: parameter count; 45 matched steps; per-head key-subspace cosine at step 45 to confirm heads actually diverged.\nSOURCE: https://arxiv.org/html/2601.11471v2\nTARGET: attention entropy in deep layers, down (more peaked heads)\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Short causal conv on the latent before expansion\nMECHANISM: A depthwise causal conv of kernel 4 over time on the 128-dim latent, applied before the norm and expansion, makes each key and value describe a 4-token local context instead of one token, which lets the attention head match on short phrases and frees the softmax from spending heads on adjacent-token lookups. It inverts assumption 3 (compression is worth paying for only as a cache) by using the narrow latent as the cheap place for temporal mixing: the conv costs 128x4 parameters per layer there versus 768x4 after expansion.\nPREDICTION: Parameters +512 per layer; step time +2%; loss curve lower early (local n-gram structure is learned fastest) with the gap narrowing but persisting.\nTEST: 45 matched steps; a 3-step timing; kernel 2 versus 4 as the one knob.\nSOURCE: https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: port",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 20140,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20134,
+  "total_tokens": 43703
+ },
+ "cost_usd": 2.019395,
+ "duration_ms": 309551,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 43703,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "basket",
+  "note": "Sequence mixing: latent KV compression and expansion / outward / research",
+  "node": "attn_latent_kv",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46133,
+ "raw": {
+  "duration_api_ms": 308134,
+  "stop_reason": "end_turn",
+  "session_id": "8e3ee624-5c31-4b69-8634-0438fdc5519b",
+  "total_cost_usd": 1.41055675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20134,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 20140,
+   "output_tokens_details": {
+    "thinking_tokens": 15253
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20134,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 20140,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20134,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20134
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 20140,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20134,
+    "webSearchRequests": 0,
+    "costUSD": 1.41055675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 15253,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 308242,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 20140,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20134,
+    "total_tokens": 43703
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 20140,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20134,
+    "total_tokens": 43703
+   },
+   "source": "usage"
+  }
+ }
+}

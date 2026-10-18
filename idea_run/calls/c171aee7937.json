@@ -1,0 +1,110 @@
+{
+ "call_id": "c171aee7937",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "QUESTIONS, aimed at the weakest links first. Ask only questions whose answer would change how the idea is built, and say which two build choices each one decides:\n\nQ1: Is the A/A floor the right noise term for the kill check, or only a lower bound on it? | decides: kill threshold from A/A reruns vs kill threshold from the across-seed sd of the arm differences (B−A)\nA1: It is only a lower bound. In A/A both runs compute the same function, so they differ only through floating-point nondeterminism. In A/B the arms differ from step 1, so the paired difference also carries seed×arm interaction: how differently the two arms react to the same init and batches. The sd that L4 needs (sd_d < 0.00124) is the across-seed sd of (B−A), which only the arm runs can measure. The A/A floor can only show that the threshold is impossible (if the floor is already above 0.00124). It cannot show that the threshold is met.\n\nQ2: Do two same-seed baseline reruns produce bitwise-identical `loss_curve`s? | decides: floor = 0 (pairing exact, no A/A runs needed beyond one check) vs floor > 0 (measure it over several pairs)\nA2: Unknown until run, but nonzero is likely. Two parts of the run are possible sources:\n- **Attention.** q/k have head dim 64+32 = 96 and v has 64, which likely rules out the flash kernel and routes SDPA to the memory-efficient kernel. That kernel's backward uses atomic accumulation (belief; https://pytorch.org/docs/stable/notes/randomness.html).\n- **cuBLAS.** It is only guaranteed reproducible with `CUBLAS_WORKSPACE_CONFIG` set (https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility).\n\nOne rerun pair compared with `loss_curve[0] == loss_curve[0]` and then elementwise settles it. Step 1 must match exactly, since the forward pass is deterministic and the batches and init are identical.\n\nQ3: Which mode must the A/A runs use? | decides: `--smoke-seconds S` (schedule identical to the full run) vs `--smoke-steps 45` (warm = 1, cooldown from step 31)\nA3: Use `--smoke-seconds`, with S large enough to pass 45 steps. Pick S as 45 × (step time from the 3-step smoke) × 1.3. Under `--smoke-steps 45`, steps 30–45 are a cooldown that the full run never sees, so a floor measured there does not transfer. Both arms and the A/A pairs must use the same mode.\n\nQ4: How many A/A pairs give a usable estimate of the floor? | decides: 3 pairs (one per existing seed) vs 6 pairs\nA4: A/A differences have known mean 0, so the sd estimate sqrt(mean d²) has df = n.\n- **n = 3:** the 95% CI on the sd is roughly [0.57, 3.7] × estimate (χ²₃ quantiles 0.216 and 9.35).\n- **n = 6:** the CI is about [0.64, 2.2] × estimate.\n\nThree pairs only resolve whether the floor is near 1e-4, near 1e-3 or near 1e-2. Pinning it against 0.00124 within a factor of 1.5 needs about 6 pairs.\n\nQ5: Can the three existing baseline seeds substitute for the A/A measurement? | decides: reuse existing curves vs new reruns\nA5: No. They are different seeds, so they give the unpaired sd, which contains everything the A/A floor removes.\n\nThe data part of that unpaired noise can be estimated:\n- `mean(loss_curve[29:45])` averages 16 × 32,768 = 524k tokens.\n- At a per-token loss sd of about 2.5–3 nats, data sampling alone contributes about 0.004 (belief).\n\nSame-seed pairing cancels this term exactly, because `Shards` replays the same windows. The existing curves still give that unpaired sd for free, and it is the denominator of the pairing-gain ratio.\n\nQ6: Does adding s and b, or a counted-unigram init, change the batches or the init of the other weights? | decides: create the new tensors with constants and count from a separate reader vs any construction that consumes RNG\nA6:\n- **Init.** Zero or constant init (`torch.zeros`, `torch.full`) consumes no torch RNG, so `self.apply(self._init)` draws the same normals for every existing weight. Any new `nn.Linear` would break that, because `_init` re-draws it.\n- **Batches.** A counted-unigram init that calls `train.sample` would advance `train.rng` and shift every batch. Counting must read a memmap slice directly (e.g. `np.bincount` on the first shard) and must not reuse `train.rng`.\n\nIf either rule is broken, the pairing is gone and the A/B noise reverts to the unpaired sd.\n\nQ7: Does the divergence between reruns grow with step, so that the 30–45 window is noisier than steps 1–26? | decides: use the floor from 29:45 for L1's steps 1–26 too vs measure a separate floor per window\nA7: Unknown. Belief: the perturbation starts at bf16 rounding scale (about 1e-3 relative in some gradients) and grows chaotically. Steps 30–45 sit right after warmup ends at step 30, at peak Muon LR 0.02, which is the most divergence-amplifying stretch.\n\nThe A/A curves give the floor per step for free: sd of d_t for each t, across pairs. Report it for steps 1–26 and 29:45 separately.\n\nQ8: Does the 4-decimal rounding in `loss_curve` matter at this floor? | decides: read losses from `loss_curve` vs add an unrounded log\nA8: No. Rounding to 1e-4 gives a per-step error sd of about 2.9e-5; averaged over 16 steps that is about 7e-6. This is far below the 0.00124 threshold (script: `round(float(l), 4)`).\n\nQ9: Should the A/A check run with `torch.use_deterministic_algorithms(True)` and a math-SDPA fallback, to drive the floor to 0? | decides: deterministic measurement build vs production kernels\nA9: Deterministic mode would make A/A trivially 0, which is uninformative. It could also force a slower or more memory-hungry SDPA path, which C4 forbids in the shipped script. The floor must be measured with the production kernels, because those are what the arm runs use. Determinism would only help as a diagnostic, to show that the nondeterminism comes from SDPA rather than cuBLAS.\n\nQ10: Does C7 acceptance benefit from pairing at all? | decides: invest in paired runs vs invest in more unpaired seeds for the exam\nA10: No. C7 is a one-sided Welch test on exam val loss, which is unpaired by construction. Pairing only sharpens the 45-step kill check (L1, L4). For acceptance, L5's arithmetic stands: at an exam sd of about 0.004, a gain of about 0.017 or more is needed with 3+3 seeds.\n\nKNOWN:\n- The A/A floor is unmeasured. No same-seed rerun pair exists. [measured]\n- Same seed gives the same init (`torch.manual_seed`) and the same batch windows (`Shards` numpy rng seeded by `--seed`), so data-sampling noise cancels exactly in paired differences. [script]\n- q/k head dim is 96 (64 content + 32 rotary) and v head dim is 64, which affects which SDPA backward kernel runs and whether it is deterministic. [script]\n- Several CUDA backward ops and cuBLAS without `CUBLAS_WORKSPACE_CONFIG` are nondeterministic, so same-seed reruns may diverge after step 1 (https://pytorch.org/docs/stable/notes/randomness.html). [web]\n- Step-1 loss must be bitwise equal across same-seed reruns. If it is not, something upstream (data or init) differs, and that is a bug, not a floor. [belief]\n- The A/A runs must use `--smoke-seconds`, with S covering at least 45 steps, so the schedule matches the full run (warm = 30, cool_start = 1067). [script]\n- Floor estimator: d_i = mean(curveA[29:45]) − mean(curveB[29:45]) for each seed, and sd = sqrt(mean d_i²) with df = n. Three pairs give a 95% CI of about [0.57, 3.7] × estimate. [belief]\n- Data-sampling noise in an unpaired `mean(loss_curve[29:45])` is about 0.004 nats (524k tokens at per-token sd 2.5–3). Pairing removes it. [belief]\n- `loss_curve` rounding contributes about 7e-6 to the window mean, which is negligible. [script]\n- The A/A floor is a lower bound on the A/B paired sd. The kill check needs the across-seed sd of (B−A) from the arm runs themselves. [belief]\n- New s and b must be created with constants, and the counted-unigram init must read shards without touching `train.rng`, or the pairing is broken. [script]\n- The pairing threshold for L4 is sd_d < 0.00124 over 3 seeds. [measured]\n\nASSUMES:\n- Same-seed pairing survives the arm change, i.e. the seed×arm interaction is small compared with the effect.\n- The noise floor at steps 30–45 is representative of the window used for each link.\n- Training loss at steps 30–45 predicts the direction of the exam loss after 1525 steps.\n- The output classifier must be the input table, whole-row.\n- Row norm is the quantity that weight decay corrupts, rather than the decay schedule itself.\n- bf16 logits are precise enough for a per-token bias to express small changes. At logit magnitude around 8–16, the bf16 step is 0.0625.\n- The head reads only the plain mean over the 4 streams.\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Partial tie with a private output subspace\nMECHANISM: Drop \"the classifier is the whole input row\". The head uses [E_v ; P_v], where P is a private 50304×32 output-only block. P is fed by a 384→32 projection of the normed read-out (about 1.6M parameters, so about 22.85M, under the 23.36M cap). Output-shaped features (frequency, next-token-class) can live in P, so the shared 384 dimensions stop being dragged toward the output geometry.\nPREDICTION: Layer-0 attention gradient falls from 0.24–0.29 toward the layer-1 level, the mid-frequency bands improve, and the training loss gap opens after step 100.\nTEST: A 45-step `--smoke-seconds` paired run, 3 seeds, plus a layer-0 gradient readout.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: leap\nBREAKS: The full-row tie between input lookup and output classifier.\nKILL: mean(loss_curve[29:45]) is not below baseline by at least 3× the measured A/A floor and at least 0.01 nats on 3 seeds.\n\nSLOT: strengthen\nIDEA: Scale-free table on both sides\nMECHANISM: The input lookup also uses RMS-normalized rows times its own per-token input gain (a further 50304 scalars), separate from the output scale. The table becomes pure direction on both sides. Under weight decay it becomes scale-invariant, which raises its effective learning rate (https://arxiv.org/abs/2006.08419).\nPREDICTION: Rank-10k+ band loss falls further than with output-only normalization, and the Spearman correlation of row norm with frequency becomes meaningless, replaced by the correlation of the gains with frequency.\nTEST: A 45-step paired run against the direction-only arm on the rank-10k+ band.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nSLOT: specialise\nIDEA: Lazy decay for absent rows\nMECHANISM: Put the table in its own AdamW group with wd = 0. After each step, decay only the rows whose gradient row norm is nonzero: `p[rows] *= 1 − lr·wd`. A rare row seen once every 50 steps then decays once rather than 50 times between updates.\nPREDICTION: Rare-row norms stay near init, and rank-10k+ band loss falls by at least 0.05 nats at step 100 with no change at rank 0–100.\nTEST: Row-norm histogram by frequency band at step 100, plus band losses, paired.\nSOURCE: own\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nSLOT: port\nIDEA: Learned stream read-out\nMECHANISM: Replace `x.mean(dim=2)` in the head with softmax(read_out_logits) over the 4 streams. The logits are zero-init, so step 0 equals the mean. The head can then weight the streams that carry output-ready content instead of always including the raw e_x share.\nPREDICTION: The read-out weights move away from uniform within 200 steps, and loss improves by 0.005–0.02.\nTEST: Track the read-out weights at steps 45 and 200, plus a paired 45-step loss comparison.\nSOURCE: own\nPART: Stream read-out\nKIND: port\n\nSLOT: combine\nIDEA: Direction-only head plus chunked fp32 cross-entropy\nMECHANISM: Combine with Cut Cross-Entropy-style chunking (https://arxiv.org/abs/2411.09009). Compute logits and loss in fp32 over chunks of 1024 tokens (about 206 MB per chunk), so the bias b and scale s act at fp32 resolution instead of the 0.0625 bf16 step near logit 10. Chunking also lowers peak VRAM compared with the full 412 MB bf16 logits.\nPREDICTION: The rare-band gain from s and b grows, the peak VRAM report falls, and the A/A floor may shrink.\nTEST: A 3-step smoke for memory and time, then a paired 45-step run against bf16 logits.\nSOURCE: https://arxiv.org/abs/2411.09009\nPART: Inputs and outputs: tied embedding, stream read-out, logits\nKIND: port\n\nOPEN:\n- What is the numeric A/A floor of mean(loss_curve[29:45]) over 3–6 same-seed pairs? | build: yes | decides: paired 3-seed kill check vs unpaired kill check with more seeds\n- Are same-seed reruns bitwise identical with the production SDPA and cuBLAS kernels? | build: yes | decides: one confirmation run vs a full A/A series\n- What is the across-seed sd of (direction-only − baseline) differences, i.e. the seed×arm interaction? | build: yes | decides: trust the L4 −0.005 threshold vs drop L4 as unresolvable\n- Which SDPA backend actually runs for qk dim 96 and v dim 64 on the RTX 4050? | build: no | decides: (diagnostic only) attribute the floor to attention vs cuBLAS\n- How does the per-step A/A sd grow from step 1 to 45? | build: yes | decides: one floor for L1 and L4 vs a floor per window\n- Do bf16 logits quantize away small bias and scale updates? | build: yes | decides: bf16 F.linear with bias vs chunked fp32 head\n\nLINK STATUS:\n- L1: open | No counted-init run exists. Its predicted gap (0.03–0.3 at step 26) is far above any plausible floor, so it is resolvable regardless of the A/A result, provided the counted init does not consume `train.rng`.\n- L2: open | Anisotropy is unmeasured in both arms, and the A/A floor does not bear on it.\n- L3: open | The Spearman correlation of norm with frequency is unmeasured. Tangential growth and AdamW radial leakage (https://arxiv.org/abs/2006.08419) may keep it above 0.5.\n- L4: open | Resolvable only if the A/B paired sd is below 0.00124. The A/A floor is a lower bound on that sd: a floor above 0.00124 refutes resolvability, and one below it is necessary but not sufficient.\n- L5: open | Acceptance is an unpaired Welch test on the exam, so pairing does not help. A gain of about 0.017 or more is needed at an exam sd of about 0.004 with 3+3 seeds.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 13469,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 14421,
+  "total_tokens": 29460
+ },
+ "cost_usd": 1.282951,
+ "duration_ms": 144052,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 29460,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "io_embed_head-in-k01",
+  "seed": "",
+  "note": "interrogating 'Per-token scale and bias decoupling norm from direction' gen 0 depth 2: What is the paired A/A floor: the sd of the `mean(loss_curve",
+  "node": "io_embed_head",
+  "depth": 2,
+  "gen": 0
+ },
+ "prompt_chars": 33702,
+ "raw": {
+  "duration_api_ms": 142659,
+  "stop_reason": "end_turn",
+  "session_id": "f784d996-e7e6-4d47-afe4-bd5cec6ee969",
+  "total_cost_usd": 0.3850696,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 14421,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 13469,
+   "output_tokens_details": {
+    "thinking_tokens": 7842
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 14421,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 13469,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 14421,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 14421
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 13469,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 14421,
+    "webSearchRequests": 0,
+    "costUSD": 0.3850696,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 7842,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 142765,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 13469,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 14421,
+    "total_tokens": 29460
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 13469,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 14421,
+    "total_tokens": 29460
+   },
+   "source": "usage"
+  }
+ }
+}

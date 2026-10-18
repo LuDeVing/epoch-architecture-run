@@ -1,0 +1,105 @@
+{
+ "call_id": "c9bc730c92e",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[{\"name\":\"Learned gate threshold bias\",\"members\":[\"s48724fa46a\",\"sb7566458ce\"]},{\"name\":\"Shared up projection across layers\",\"members\":[\"se8faa8adcb\"]},{\"name\":\"Previous-token value path\",\"members\":[\"s6c4ebba241\"]},{\"name\":\"Normalized hidden with write scalar\",\"members\":[\"s5d17bd1ffb\"]},{\"name\":\"Depth-varying FFN width\",\"members\":[\"s0aa9623dcf\"]},{\"name\":\"Uniformly wider FFN\",\"members\":[\"s9079230f69\"]},{\"name\":\"Squared-ReLU gate\",\"members\":[\"sda81b3593a\"]},{\"name\":\"Layer-0 gradient anomaly analysis\",\"members\":[\"s6b7fe0d71d\",\"s1164a29b12\"]},{\"name\":\"Remove input-parallel component of MLP output\",\"members\":[\"sa53e2f4894\"]},{\"name\":\"Fused gate/up matrix for joint Muon orthogonalisation\",\"members\":[\"s1b74fe43ba\"]},{\"name\":\"Larger gate init scale\",\"members\":[\"sffb7fa3b95\"]}]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 372,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 3152,
+  "total_tokens": 5094
+ },
+ "cost_usd": 0.017876,
+ "duration_ms": 5453,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 5094,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: mlp_swiglu/inward, 13 sketches"
+ },
+ "prompt_chars": 7450,
+ "raw": {
+  "duration_api_ms": 3790,
+  "stop_reason": "end_turn",
+  "session_id": "4ad41778-3f88-407e-a2f4-a61520695f2a",
+  "total_cost_usd": 0.016488799999999998,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 3152,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 372,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 3152,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 372,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 3152,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 3152
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 372,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 3152,
+    "webSearchRequests": 0,
+    "costUSD": 0.016488799999999998,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 3874,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 372,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3152,
+    "total_tokens": 5094
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 372,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3152,
+    "total_tokens": 5094
+   },
+   "source": "usage"
+  }
+ }
+}

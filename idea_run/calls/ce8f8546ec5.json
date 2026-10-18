@@ -1,0 +1,110 @@
+{
+ "call_id": "ce8f8546ec5",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll write the scratch seed list and the subtract table first, then the eight sketches.\n\nPASS 1 (scratch):\n\nSubtract table for this part (what removing or freezing it does, and what the measurements say it buys):\n- n1/n2 RMS division: freeze at identity gives a no-norm pre-norm net, residual RMS grows unchecked, diverges. Not defensible.\n- GPT.norm division: head sees residual RMS of O(10) by the end, tied logits explode. Not defensible.\n- Per-channel norm gains (9,600 params on n1, n2, latent_norm, q/k norms, final): frozen at 1 the net still trains. modded-nanogpt runs with no affine norms at all. Buys little, and under AdamW with decay 0.1 the gains are pulled toward 0 the whole run. Defensible removal #1.\n- Scaled branch init 1/sqrt(2L): fixed by assumption. Note though that Muon's first update has spectral norm lr*scale = 0.02 while wo starts at spectral norm 0.08, so the scaling is erased in about 4 steps.\n- Near-symmetric stream write start (write weights 1.015/0.995, read uniform, mixing 0.99 identity): all four streams are bit-identical at init and stay within 2% of each other. Three quarters of the residual activation memory carries copies. Defensible removal #2.\n- Gaussian init spectrum of Muon matrices: init spectral norm 0.78 vs Muon step 0.02, so the random dominant directions persist for roughly 40 steps and are only removed by weight decay.\n- eps 1e-6: inert at every scale this net sees.\n\nTwelve seeds, one rule each:\n1. Streams start as identical copies -> graded write rates give four timescales.\n2. Each norm owns a per-channel gain -> no affine, one scalar temperature per norm.\n3. The head's temperature is scale-free -> per-token temperature from residual magnitude.\n4. One RMS statistic per token -> six grouped statistics so outlier channels cannot silence the rest.\n5. Init is iid Gaussian -> semi-orthogonal init with matched entry RMS (Muon never removes the random spectrum).\n6. The embedding enters at its raw tied scale -> RMSNorm after lookup decouples input scale from logit scale.\n7. The final gain starts at 1 -> starts at 0 so logits start uniform (zero-init head under tying).\n8. QK-norm gains start at 1 -> start higher, since the content logit is capped at 6.5 with gain 1.\n9. eps is inert -> eps equal to the init RMS squared makes early training behave like a no-norm net.\n10. Norm gains are decayed like weights -> optimizer part, out of scope.\n11. All 12 layers draw independent random inits -> one shared draw (looped start). Weak mechanism, dropped.\n12. Muon matrices start at std 0.02 -> smaller, since the init lingers as junk for 40+ steps.\n\nKept as leaps (farthest from the brief and from each other): 1, 2, 3, 4. Seeds 6, 7, 8, 12 become port/tune sketches.\n\nIDEA: Embedding RMSNorm (input scale decoupled from the tied head)\nMECHANISM: Add an RMSNorm with learned gain directly after the token lookup, so every token enters the four streams at unit RMS. With tied embeddings the row norms of E are set by the head gradient and AdamW decay, so rare tokens enter at a fraction of the scale of frequent ones and are drowned by the first branch writes; the norm removes that coupling without touching the head.\nPREDICTION: First 50 steps slightly slower (branches start at 1.6% of the stream), then lower loss, concentrated on rare tokens. +384 params, step time unchanged.\nTEST: 45-step smoke matched against baseline; then a 200-step run comparing loss on tokens below rank 5,000 in frequency.\nSOURCE: https://github.com/kellerjordan/modded-nanogpt (x0 = norm(embed)); https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: QK-norm gain init above 1 (uncapping the attention logit)\nMECHANISM: After QK RMSNorm the content logit is bounded by 64*g_q*g_k/sqrt(96) = 6.5 at gain 1, and the gains must grow under AdamW at 3e-3 per step against decay 0.1 before any head can attend sharply over 1024 positions. Initializing the q and k norm gains at g > 1 gives the sharp regime from step 0 (the speedrun found 1.36x the default scale optimal after QK-norm).\nPREDICTION: Faster drop in the first 300 steps, higher max attention logit, lower deep-layer attention entropy, final loss lower by a few hundredths of a nat. No param or time change.\nTEST: 45-step smoke at g in {1, 1.5, 2}; kill a value if its step-45 loss is above baseline. Full 3-seed run on the best.\nSOURCE: own, builds on https://github.com/kellerjordan/modded-nanogpt attention scale 0.12\nTARGET: max attention logit, up; attention entropy in deep layers, down\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Final-norm gain at zero (zero-init head through the tie)\nMECHANISM: The head is tied so it cannot be zero-initialized, but logits = gain * x_hat * E, so a final-norm gain of 0 gives uniform logits at step 0. Both Muon and Adam are scale-invariant to gradient magnitude, so the body trains at full speed while the gain grows, and the soft early targets remove the noise the random 0.39-std logits inject into the first hundred updates.\nPREDICTION: Step-0 loss exactly ln(50304); by step 45 below baseline; final loss lower by 0.01 to 0.02. No param or time change.\nTEST: 45-step smoke at gain init in {0, 0.1, 0.3}; the body's gradient is zero for exactly one step at 0, so compare from step 5.\nSOURCE: own adaptation of https://github.com/kellerjordan/modded-nanogpt zero-init classifier\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Smaller init for Muon-trained matrices\nMECHANISM: A 384x384 Gaussian at std 0.02 has spectral norm 0.78 while a Muon step has spectral norm 0.02, so the random dominant directions survive for roughly 40 steps and afterward decay only through weight decay, lingering as a 10% random component at the end. Shrinking the input-projection init (wq, compress, expand, rotary, w_gate, w_up) to std 0.01 or 0.005 halves the junk without changing the branch scaling.\nPREDICTION: Identical first 10 steps, then a small persistent gap in favor of the smaller init; no change in params or time.\nTEST: 45-step and 200-step smoke at std in {0.02, 0.01, 0.005}; kill if 0.005 is worse than 0.02 at step 200.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Multi-timescale streams (subtract the identical copies, reinvest in graded write rates)\nMECHANISM: Removal: the near-symmetric write start, which keeps all four streams within 2% of each other so three of them are copies that cost memory and buy nothing. Reinvestment: initialize the write logits so the streams receive each branch at weights 1.6, 0.8, 0.4, 0.2, making stream 3 a slow near-embedding channel and stream 0 a fast accumulator, so each layer's read softmax can choose between recent and ancient state, the same role the Attention Residuals of Kimi K3 play without their cost.\nPREDICTION: Per-stream RMS diverges within 100 steps; read softmaxes leave uniform; loss gain appears after step 300. 0 extra params, unchanged time.\nTEST: 45-step smoke; then at 200 steps check the per-stream RMS ratio (kill if still within 1.2x) and the matched loss.\nSOURCE: own, contrasts https://arxiv.org/pdf/2603.15031.pdf\nTARGET: residual RMS growth, spread across streams up; validation loss down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The four residual streams start as, and remain, interchangeable copies.\nKEEPS: Sinkhorn mixing, softmax reads, mean-of-streams at the head, scaled branch init, pre-norm on the collapsed read-out.\nP_SUCCESS: 0.15\nKILL: step-45 matched loss above baseline by more than 0.02.\n\nIDEA: No-affine norms with one scalar temperature each (subtract the gain vectors)\nMECHANISM: Removal: every per-channel norm gain (9,600 params), which modded-nanogpt shows are unnecessary and which AdamW decay pulls toward zero all run. Reinvestment: each norm keeps a single scalar, initialized so the attention temperature starts at 1.4x and the MLP gate pre-activation at the current scale, because these two temperatures are the only scales Muon's uniform-singular-value updates cannot set cheaply.\nPREDICTION: Loss within 0.01 of baseline through step 100, then lower because the temperatures are no longer fighting decay channel by channel. Params down 9,560.\nTEST: 45-step smoke; a 500-step run comparing the gain vector's channel spread in the baseline (if the baseline gains stay within 10% of uniform, the vector was idle and the removal is safe).\nSOURCE: own, builds on https://github.com/kellerjordan/modded-nanogpt no-affine norm\nTARGET: update-norm spread, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Each normalization owns a learned per-channel gain.\nKEEPS: Pre-norm placement, RMS statistic, QK-norm, scaled init, all branch shapes.\nP_SUCCESS: 0.1\nKILL: step-45 matched loss above baseline by more than 0.03.\n\nIDEA: Magnitude-aware head temperature (subtract scale-freeness at the final norm)\nMECHANISM: Removal: the final RMSNorm throws away the residual magnitude, so a token whose residual grew large from many confident writes gets the same logit temperature as one the layers barely touched. Reinvestment: multiply the final normalized output by exp(a * (log RMS - m)) with scalars a (init 0) and m, so the model can sharpen confident tokens and hedge uncertain ones. The null case is exactly the baseline.\nPREDICTION: a drifts positive within a few hundred steps; the loss gap is calibration-sized, 0.005 to 0.01. +2 params, unchanged time.\nTEST: Pre-check on the baseline: correlation between per-token final-residual RMS and per-token loss over 2M tokens; kill if |corr| < 0.1 without training. Then a 45-step smoke.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The head's logit temperature is independent of the residual magnitude.\nKEEPS: RMS normalization, tied head, cross-entropy, all layers unchanged.\nP_SUCCESS: 0.1\nKILL: step-45 matched loss above baseline by more than 0.01.\n\nIDEA: Grouped RMS statistic on the read-out (subtract the single per-token statistic)\nMECHANISM: Removal: the one RMS per token, which lets a few outlier channels of the kind that form around attention sinks dominate the divisor and silence the other 380 channels for that token. Reinvestment: six groups of 64 channels each normalized by their own RMS in n1, n2 and the final norm, so an outlier group cannot rescale the rest, at the cost of six reductions instead of one.\nPREDICTION: Lower first-token attention mass in deep layers and a loss gain at late positions; params unchanged, step time within 2%.\nTEST: Pre-check on the baseline: max |channel| over RMS of the read-out in layers 6 to 11; kill without training if below 5. Then a 45-step smoke.\nSOURCE: own\nTARGET: first-token attention mass, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Normalization uses one statistic per token.\nKEEPS: Pre-norm on the collapsed read-out, learned gains, scaled init, all shapes.\nP_SUCCESS: 0.08\nKILL: step-45 matched loss above baseline by more than 0.02.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 26616,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20218,
+  "total_tokens": 50263
+ },
+ "cost_usd": 2.539155,
+ "duration_ms": 409881,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 50263,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "glove",
+  "note": "State across depth: normalization placement and initializati / inward / research",
+  "node": "depth_norm_init",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46235,
+ "raw": {
+  "duration_api_ms": 408451,
+  "stop_reason": "end_turn",
+  "session_id": "11f7f276-cf73-4553-977e-861ca05ed515",
+  "total_cost_usd": 1.73603675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20218,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 26616,
+   "output_tokens_details": {
+    "thinking_tokens": 22205
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20218,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 26616,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20218,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20218
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 26616,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20218,
+    "webSearchRequests": 0,
+    "costUSD": 1.73603675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 22205,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 408547,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 26616,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20218,
+    "total_tokens": 50263
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 26616,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20218,
+    "total_tokens": 50263
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,120 @@
+{
+ "call_id": "cba66abb9b4",
+ "role": "research",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n{\n  \"known\": [\n    {\n      \"name\": \"Squared ReLU in the FFN (Primer)\",\n      \"mechanism\": \"Replace ReLU with ReLU² in the feed-forward block, found by evolutionary search over transformer primitives.\",\n      \"effect\": \"The paper reports this as the single largest gain in Primer. Primer as a whole cut training cost about 4x at 500M parameters. At 1.9B it matched the baseline's one-shot quality with roughly 1/3 of the compute.\",\n      \"where\": \"500M to 1.9B parameter decoder LMs on C4, T5-style comparison\",\n      \"url\": \"https://arxiv.org/pdf/2109.08668\"\n    },\n    {\n      \"name\": \"ReLU² in modded-nanoGPT speedrun\",\n      \"mechanism\": \"ReLU² replaces GELU in a non-gated MLP, bundled with padded embeddings, zero-init projections and QK-norm.\",\n      \"effect\": \"This bundle took the record to 15.2 minutes (record log entry dated 10/14/24). ReLU² is still part of the speedrun architecture. The summary I read does not isolate its individual contribution.\",\n      \"where\": \"GPT-2 small (124M) speedrun track on 8xH100\",\n      \"url\": \"https://github.com/KellerJordan/modded-nanogpt\"\n    },\n    {\n      \"name\": \"ReLU² vs ReLU vs SwiGLU at matched parameters\",\n      \"mechanism\": \"Compare ReLU, ReLU², ReGLU and SwiGLU at equal parameter counts, and measure sparsity as well as accuracy.\",\n      \"effect\": \"Average accuracy was about 50.5 for both SwiGLU and ReLU², and 48.9 for ReLU. ReLU² gives higher activation sparsity.\",\n      \"where\": \"1.3B-parameter models\",\n      \"url\": \"https://arxiv.org/pdf/2402.03804\"\n    },\n    {\n      \"name\": \"GLU variants (SwiGLU, GEGLU, ReGLU)\",\n      \"mechanism\": \"A gated MLP multiplies an activated gate projection by a linear value projection.\",\n      \"effect\": \"SwiGLU and GEGLU gave the best perplexity among the variants tested. I did not confirm the exact numbers.\",\n      \"where\": \"T5-style models\",\n      \"url\": \"https://arxiv.org/pdf/2002.05202\"\n    },\n    {\n      \"name\": \"Layer-wise scaling of FFN width (OpenELM)\",\n      \"mechanism\": \"FFN multiplier and head count grow linearly with depth, so early layers get narrower FFNs and later layers get wider ones.\",\n      \"effect\": \"OpenELM reports a 2.36% accuracy gain over OLMo at about 1B parameters while using 2x fewer pre-training tokens. That comparison is confounded with other changes.\",\n      \"where\": \"270M to 3B parameters\",\n      \"url\": \"https://arxiv.org/pdf/2404.14619\"\n    },\n    {\n      \"name\": \"Layer-wise scaling variants (Crown, Frame, Reverse)\",\n      \"mechanism\": \"Redistribute FFN width and head count across depth using 2-point or 3-point linear interpolation.\",\n      \"effect\": \"All variants reached similar losses and beat an equal-cost uniform baseline without a large throughput drop. Larger scales are untested. One commenter reports a dtype bug in the data pipeline, which I could not verify.\",\n      \"where\": \"180M parameters, 5B tokens\",\n      \"url\": \"https://arxiv.org/pdf/2509.06518\"\n    },\n    {\n      \"name\": \"Primer depthwise convolution (local mixing)\",\n      \"mechanism\": \"Add a depthwise convolution after the Q, K and V projections to bring in local neighbor information. This sits in attention, not the MLP.\",\n      \"effect\": \"Together with squared ReLU it forms Primer-EZ. The authors say it is easy to implement and transfers across codebases.\",\n      \"where\": \"500M to 1.9B parameters\",\n      \"url\": \"https://arxiv.org/pdf/2109.08668\"\n    },\n    {\n      \"name\": \"Shift-FFN (adjacent-token differences in the FFN)\",\n      \"mechanism\": \"Add an adjacent-token difference term to the FFN input so the MLP sees local neighbor information. The authors say it works with GLU-style FFNs.\",\n      \"effect\": \"Used with LoRA, it gave higher math-reasoning accuracy and fewer cyclical reasoning loops than standard LoRA or full fine-tuning. Pretraining was not tested.\",\n      \"where\": \"Fine-tuning of reasoning LLMs\",\n      \"url\": \"https://arxiv.org/pdf/2505.17153\"\n    },\n    {\n      \"name\": \"Peri-LN (normalization on sublayer outputs)\",\n      \"mechanism\": \"Apply a norm to the input and also to the output of each sublayer, as in Gemma 2 and OLMo 2. The post-MLP norm divides by the output magnitude, which bounds weight gradients.\",\n      \"effect\": \"The authors report more stable training and bounded activation variance than Pre-LN.\",\n      \"where\": \"Up to about 3.2B parameters\",\n      \"url\": \"https://arxiv.org/pdf/2502.02732\"\n    },\n    {\n      \"name\": \"Masked Gated Linear Unit (MGLU)\",\n      \"mechanism\": \"Replace the separate gate and value matrices with one shared matrix and learned binary masks, which cuts memory reads.\",\n      \"effect\": \"SwiMGLU matched or beat SwiGLU on downstream accuracy. The FlashMGLU kernel is 34% faster and 47% more memory-efficient than standard GLUs on an RTX5090. I did not find perplexity numbers.\",\n      \"where\": \"159M and 1.08B parameters, Llama-3-style\",\n      \"url\": \"https://arxiv.org/pdf/2506.23225\"\n    }\n  ],\n  \"failed\": [\n    {\n      \"name\": \"SwiGLU gave no clear gain in Falcon\",\n      \"why\": \"Falcon's authors saw no clear zero-shot benefit from SwiGLU at 1B and 3B, so they did not adopt it. They suggested the result depends on hyperparameter tuning.\",\n      \"url\": \"https://arxiv.org/pdf/2311.16867\"\n    },\n    {\n      \"name\": \"ReLU² does not beat SwiGLU in accuracy at matched parameters\",\n      \"why\": \"ReLU² only tied SwiGLU (about 50.5 each). Its advantage is sparsity and efficiency, not lower loss.\",\n      \"url\": \"https://arxiv.org/pdf/2402.03804\"\n    },\n    {\n      \"name\": \"OpenELM layer-wise scaling gain is not isolated\",\n      \"why\": \"OpenELM had no targeted ablation of layer-wise scaling, so its benefit is ambiguous. Follow-up work only found similar losses across variants at small scale.\",\n      \"url\": \"https://arxiv.org/pdf/2509.06518\"\n    }\n  ],\n  \"open\": [\n    {\n      \"direction\": \"Depth-dependent FFN width, reallocating parameters between attention and MLP across the 12 layers (compare 'Reverse' and 'Crown' shapes) at 21M parameters and 50M tokens.\",\n      \"why\": \"Existing evidence is at 180M parameters or larger, is confounded, and has not been tested at large scale. The uniform-width assumption has not been checked in a latent-attention, 4-stream-residual recipe.\",\n      \"url\": \"https://arxiv.org/pdf/2509.06518\"\n    },\n    {\n      \"direction\": \"Token-shift or short causal convolution on the gated MLP input, so the MLP sees neighbor tokens, tested in pretraining.\",\n      \"why\": \"Shift-FFN was only tested in fine-tuning. I found no pretraining ablation of a short convolution inside a SwiGLU FFN.\",\n      \"url\": \"https://arxiv.org/pdf/2505.17153\"\n    },\n    {\n      \"direction\": \"Output normalization or depth-based gating of the MLP branch (Peri-LN style) in a recipe whose MLP output RMS grows to 10.9.\",\n      \"why\": \"Peri-LN argues output norms bound variance and gradients. Its effect on loss in a mixed-stream residual with QK-norm is untested.\",\n      \"url\": \"https://arxiv.org/pdf/2502.02732\"\n    },\n    {\n      \"direction\": \"ReLU² (or other sparse or polynomial) gating inside a gated MLP, replacing SiLU.\",\n      \"why\": \"ReLU² was compared with SwiGLU only at 1.3B, with a tie on accuracy. Whether a squared activation helps the gate in a GLU at a very small token budget is not established.\",\n      \"url\": \"https://arxiv.org/pdf/2402.03804\"\n    },\n    {\n      \"direction\": \"Shared-matrix or masked gating (MGLU) to buy a wider hidden size at the same parameter count.\",\n      \"why\": \"MGLU matched SwiGLU on downstream accuracy while using fewer weight reads. Its perplexity at small scale and its use as a parameter-reallocation tool are not reported.\",\n      \"url\": \"https://arxiv.org/pdf/2506.23225\"\n    }\n  ],\n  \"queries\": [\n    \"modded-nanoGPT speedrun ReLU squared MLP record\",\n    \"GLU variants improve transformer SwiGLU ReLU^2 comparison small language models arXiv 2025\",\n    \"Primer squared ReLU depthwise convolution MLP language model\",\n    \"non-uniform FFN width across layers transformer layer-wise scaling OpenELM FFN ratio\",\n    \"MLP token shift or short causal convolution in FFN gated language model ablation 2025\",\n    \"FFN output normalization post-norm sandwich norm MLP output RMS growth Gemma OLMo 2 ablation\",\n    \"The Devil is in the Condition Numbers GLU better than non-GLU\",\n    \"Masked Gated Linear Unit MGLU results SwiGLU perplexity\",\n    \"Crown, Frame, Reverse layer-wise FFN width attention heads redistribution 180M\"\n  ]\n}\n```",
+ "usage": {
+  "input_tokens": 123047,
+  "output_tokens": 12515,
+  "cache_read_input_tokens": 29419,
+  "cache_creation_input_tokens": 14038,
+  "total_tokens": 179019
+ },
+ "cost_usd": 0.618334,
+ "duration_ms": 55359,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 4000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 179019,
+ "over_cap": true,
+ "meta": {
+  "card": "research",
+  "operator": "mlp_swiglu",
+  "note": "web search: Per-token computation: SwiGLU MLP"
+ },
+ "prompt_chars": 3230,
+ "raw": {
+  "duration_api_ms": 96941,
+  "stop_reason": "end_turn",
+  "session_id": "946e76e9-2631-47c7-b93e-a8801c53b3c1",
+  "total_cost_usd": 0.20965179999999997,
+  "usage": {
+   "input_tokens": 8,
+   "cache_creation_input_tokens": 14038,
+   "cache_read_input_tokens": 29419,
+   "output_tokens": 4419,
+   "output_tokens_details": {
+    "thinking_tokens": 84
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 14038,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 3449,
+     "cache_read_input_tokens": 13391,
+     "cache_creation_input_tokens": 2454,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2454
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 8,
+    "outputTokens": 4419,
+    "cacheReadInputTokens": 29419,
+    "cacheCreationInputTokens": 14038,
+    "webSearchRequests": 0,
+    "costUSD": 0.1032999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 84,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   },
+   "claude-haiku-5-5": {
+    "inputTokens": 123039,
+    "outputTokens": 8096,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 9,
+    "costUSD": 0.1063519,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 2263,
+    "canonicalModel": "claude-haiku-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 10,
+  "duration_ms": 54104,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 8,
+    "output_tokens": 4419,
+    "cache_read_input_tokens": 29419,
+    "cache_creation_input_tokens": 14038,
+    "total_tokens": 47884
+   },
+   "model_usage_sum": {
+    "input_tokens": 123047,
+    "output_tokens": 12515,
+    "cache_read_input_tokens": 29419,
+    "cache_creation_input_tokens": 14038,
+    "total_tokens": 179019
+   },
+   "source": "modelUsage"
+  }
+ }
+}

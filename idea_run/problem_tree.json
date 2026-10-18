@@ -1,0 +1,573 @@
+{
+ "nodes": [
+  {
+   "id": "root",
+   "name": "lower validation loss at a fixed budget",
+   "parent": null,
+   "frame": "An autoregressive Transformer language model trained with next-token cross entropy on a fixed token budget, judged by held-out validation loss.",
+   "assumptions": [
+    "the model predicts the next token",
+    "validation loss on held-out text is the target",
+    "training is one pass over a fixed token budget with a fixed compute budget"
+   ],
+   "boundary": "everything",
+   "directions": [
+    "upward"
+   ],
+   "stats": {
+    "upward": {
+     "sketches": 14,
+     "clusters": 0,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "io_embed_head",
+   "name": "Inputs and outputs: tied embedding, stream read-out, logits",
+   "parent": "root",
+   "frame": "A single GPT-2 BPE embedding table (50304 x 384) is broadcast to four identical residual streams at the input, and the output head is the same table applied to a final RMSNorm of the plain mean of the four streams. Loss is uniform next-token cross entropy with no logit scaling or soft-capping.",
+   "assumptions": [
+    "Input and output representations should share one matrix, so the embedding geometry must serve both lookup and classification.",
+    "The four streams should be read out by an equal-weight mean, with no learned or depth-aware read-out.",
+    "All four streams should start as copies of the same embedding rather than carrying different information.",
+    "Logits need no temperature, softcap or per-token scale even though residual RMS grows 7.8x through depth.",
+    "Rare tokens (loss 11.6 nats at rank 10k+) are handled adequately by a 384-dim tied table.",
+    "The token-frequency prior is additive in log space and unconditional.",
+    "In the baseline, row norm actually encodes output frequency (unmeasured).",
+    "Tying is kept and the input lookup keeps raw, un-normalised rows.",
+    "A per-token scale is worth having on top of a per-token bias.",
+    "AdamW lr 3e-3 is an appropriate rate for the new vectors.",
+    "An early head start persists to step 1525.",
+    "The final RMSNorm and the mean-of-streams readout stay as they are."
+   ],
+   "boundary": "GPT.__init__ (tok, head, norm, tie), GPT.forward input expand and final mean/head/loss, Config.vocab_size, Config.tie_embeddings, param_counts",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "The token-frequency prior is additive in log space and unconditional."
+    },
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "In the baseline, row norm actually encodes output frequency (unmeasured)."
+    },
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "Tying is kept and the input lookup keeps raw, un-normalised rows."
+    },
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "A per-token scale is worth having on top of a per-token bias."
+    },
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "AdamW lr 3e-3 is an appropriate rate for the new vectors."
+    },
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "An early head start persists to step 1525."
+    },
+    {
+     "from": "io_embed_head-in-k01",
+     "text": "The final RMSNorm and the mean-of-streams readout stay as they are."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 30,
+     "clusters": 16,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 7,
+     "clusters": 2,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "attn_latent_kv",
+   "name": "Sequence mixing: latent KV compression and expansion",
+   "parent": "root",
+   "frame": "Keys and values are produced from a 128-dim RMS-normed latent (compress 384->128, expand 128->768) shared by all six heads, while queries come from a full 384->576 projection. The latent is a user-specified MLA substitute for V4 token compression.",
+   "assumptions": [
+    "A 128-dim latent is wide enough for both keys and values of six heads at this width.",
+    "Keys and values should be derived from the same latent rather than separately compressed.",
+    "Compression is worth paying for at 1024 context where no KV-cache pressure exists.",
+    "Normalizing the latent before expansion is harmless to key/value scale.",
+    "Query projection need not be compressed, so q and kv live in different subspaces.",
+    "The 128-dim latent limits quality at 21M params, 50M tokens and context 1024. Rank is the constraint, not training time.",
+    "Spending 49k params per layer on nonlinearity beats spending them on more latent width.",
+    "Losing the linear latent at init (silu in its near-quadratic regime) costs less than the expressiveness gained.",
+    "K/V of position t should depend only on the residual at t.",
+    "K and V should share one gated code, and all six heads should see the same gate.",
+    "The effect appears within 45 steps and is concentrated on rare targets.",
+    "The gate is useful in every layer, not mainly at layer 0, where the input is the bare embedding."
+   ],
+   "boundary": "Attention.__init__ (compress, latent_norm, expand, wq), Attention.forward up to q/k/v construction",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "The 128-dim latent limits quality at 21M params, 50M tokens and context 1024. Rank is the constraint, not training time."
+    },
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "Spending 49k params per layer on nonlinearity beats spending them on more latent width."
+    },
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "Losing the linear latent at init (silu in its near-quadratic regime) costs less than the expressiveness gained."
+    },
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "K/V of position t should depend only on the residual at t."
+    },
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "K and V should share one gated code, and all six heads should see the same gate."
+    },
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "The effect appears within 45 steps and is concentrated on rare targets."
+    },
+    {
+     "from": "attn_latent_kv-in-k01",
+     "text": "The gate is useful in every layer, not mainly at layer 0, where the input is the bare embedding."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 30,
+     "clusters": 15,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 7,
+     "clusters": 4,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "attn_rope_norm",
+   "name": "Sequence mixing: decoupled rotary dims and QK-norm",
+   "parent": "root",
+   "frame": "Positional information lives in a separate 32-dim rotary key shared across heads (theta 10000) concatenated to a 64-dim RMS-normed content key; queries get a per-head rotary part. SDPA scales by 1/sqrt(96) with no learned temperature.",
+   "assumptions": [
+    "Content and position should be split into disjoint channels rather than entangled.",
+    "One shared 32-dim rotary key suffices for all heads and all layers.",
+    "Fixed theta 10000 is right for 1024 context and does not need per-layer or learned frequencies.",
+    "QK RMSNorm with a fixed SDPA scale gives the right attention temperature at every layer, despite max logits reaching 22.7 and entropy dropping to 0.67 by layer ",
+    "No sliding window, bias toward recent positions, or attention sink is needed (first-token mass is below 0.6 percent).",
+    "Knowing the offset of the attended token improves next-token prediction beyond what head identity already implies.",
+    "The phase of a rotated content vector is decodable by `wo` plus the downstream MLP without a dedicated carrier.",
+    "The fixed geometric theta=10000 frequencies of the key path are also the right ones for the value path.",
+    "Losing content in the rotated dims of diffuse heads costs less than the offset information gains.",
+    "Every layer should get the same treatment.",
+    "Values come from the shared MLA latent, so any value-side positional signal must be injected after `expand`.",
+    "Induction heads exist by the kill step (45), so recall loss can respond."
+   ],
+   "boundary": "rope_cache, apply_rope, Attention.rotary, Attention.q_norm, Attention.k_norm, the rope/concat/SDPA section of Attention.forward, Config.rope_theta, Config.sliding_window",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "Knowing the offset of the attended token improves next-token prediction beyond what head identity already implies."
+    },
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "The phase of a rotated content vector is decodable by `wo` plus the downstream MLP without a dedicated carrier."
+    },
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "The fixed geometric theta=10000 frequencies of the key path are also the right ones for the value path."
+    },
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "Losing content in the rotated dims of diffuse heads costs less than the offset information gains."
+    },
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "Every layer should get the same treatment."
+    },
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "Values come from the shared MLA latent, so any value-side positional signal must be injected after `expand`."
+    },
+    {
+     "from": "attn_rope_norm-in-k08",
+     "text": "Induction heads exist by the kill step (45), so recall loss can respond."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 29,
+     "clusters": 13,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 13,
+     "clusters": 4,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "attn_heads_outpu",
+   "name": "Sequence mixing: head count, head structure and output proje",
+   "parent": "root",
+   "frame": "Six heads of 64 content dims with full multi-head (n_kv_head equals n_head) causal attention over 1024 tokens; head outputs are concatenated and projected by wo, initialized at std 0.02/sqrt(24).",
+   "assumptions": [
+    "Six heads of 64 dims is the right split of 384 for this depth; more smaller heads or fewer larger ones were not tested.",
+    "Every head in every layer attends over the full context with the same mechanism.",
+    "Head outputs combine by plain concatenation and a linear map, with no per-head gating or value-path nonlinearity.",
+    "GQA is unused because n_kv_head equals n_head, even though the latent already shares KV across heads.",
+    "The output projection needs no norm or scaling despite layer-0 attention gradient norm being 10x the rest.",
+    "Induction/recall is a real bottleneck at 50M tokens for this 12-layer, 21M model.",
+    "The two-layer previous-token + induction circuit uses capacity that would otherwise go to useful circuits.",
+    "A hard, fixed one-token shift is the right primitive, not a learned mix of current and previous keys.",
+    "Half the heads in every layer can lose same-token key/value pairing without hurting non-recall tokens.",
+    "Matching on a single previous token is precise enough; false matches on frequent tokens do not add noise.",
+    "The key for position j should come from the same layer's residual at j−1, not from the embedding.",
+    "The exam's fixed 1024-token windows contain enough within-window repeats (13% recall targets) to show a gain."
+   ],
+   "boundary": "Attention.wo, the SDPA call and reshape in Attention.forward, Config.n_head, Config.n_kv_head, the wo init in GPT.__init__",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "Induction/recall is a real bottleneck at 50M tokens for this 12-layer, 21M model."
+    },
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "The two-layer previous-token + induction circuit uses capacity that would otherwise go to useful circuits."
+    },
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "A hard, fixed one-token shift is the right primitive, not a learned mix of current and previous keys."
+    },
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "Half the heads in every layer can lose same-token key/value pairing without hurting non-recall tokens."
+    },
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "Matching on a single previous token is precise enough; false matches on frequent tokens do not add noise."
+    },
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "The key for position j should come from the same layer's residual at j−1, not from the embedding."
+    },
+    {
+     "from": "attn_heads_outpu-ou-k00",
+     "text": "The exam's fixed 1024-token windows contain enough within-window repeats (13% recall targets) to show a gain."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 20,
+     "clusters": 10,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 13,
+     "clusters": 6,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "mlp_swiglu",
+   "name": "Per-token computation: SwiGLU MLP",
+   "parent": "root",
+   "frame": "Each block has a dense SwiGLU feed-forward with hidden size 1077 (about 2.8x d_model), no biases, SiLU gating, and a down projection initialized at std 0.02/sqrt(24). It accounts for most of the non-embedding parameters.",
+   "assumptions": [
+    "A single dense gated MLP per block with uniform width across all 12 layers is optimal.",
+    "SiLU gating is the right nonlinearity; sparsity or squared activations are untested.",
+    "The MLP sees only the current token's residual read-out and no local neighbor information.",
+    "Hidden size 2.8x is the right ratio given tied embeddings dominate total parameters.",
+    "Nothing in the MLP needs normalization or gating by depth despite output RMS growing to 10.9.",
+    "Absolute write RMS matters in a pre-norm stack where every read is RMS-normalized.",
+    "MLP writes, not attention writes, drive the x7.8 residual growth.",
+    "Residual growth hurts loss at 21M parameters and 50M tokens.",
+    "One scalar envelope per layer is enough; channel-level imbalance is irrelevant.",
+    "A batch-level envelope (4 sequences) is stable enough to normalize with.",
+    "The gain can be learned by the same AdamW settings as norms and embeddings.",
+    "Running statistics from training transfer to the exam unchanged (frozen EMA)."
+   ],
+   "boundary": "MLP.__init__, MLP.forward, Config.d_ff, the w_down init in GPT.__init__",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "Absolute write RMS matters in a pre-norm stack where every read is RMS-normalized."
+    },
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "MLP writes, not attention writes, drive the x7.8 residual growth."
+    },
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "Residual growth hurts loss at 21M parameters and 50M tokens."
+    },
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "One scalar envelope per layer is enough; channel-level imbalance is irrelevant."
+    },
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "A batch-level envelope (4 sequences) is stable enough to normalize with."
+    },
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "The gain can be learned by the same AdamW settings as norms and embeddings."
+    },
+    {
+     "from": "mlp_swiglu-ou-k00",
+     "text": "Running statistics from training transfer to the exam unchanged (frozen EMA)."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 13,
+     "clusters": 11,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 24,
+     "clusters": 13,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "depth_stream_mix",
+   "name": "State across depth: four-stream Sinkhorn residual mixing",
+   "parent": "root",
+   "frame": "The residual state is four parallel 384-dim streams; each block reads a softmax-weighted combination, runs the branch, then applies a static doubly-stochastic 4x4 mix (20 Sinkhorn iterations on exp of learned logits, init 6x identity) and writes the branch into streams with sigmoid gains starting near 1 on one stream.",
+   "assumptions": [
+    "Mixing matrices should be static per block and doubly stochastic rather than input-dependent.",
+    "Four streams initialized as copies and mixed near-identity actually diverge enough to be useful.",
+    "Read weights are a token-independent softmax, so the branch cannot select streams per token.",
+    "Write gains near 1 on a single stream with Sinkhorn mixing bound residual growth, yet RMS still grows 7.8x.",
+    "Twenty Sinkhorn iterations in float32 per block per stage are a cost worth paying every forward.",
+    "The streams start as identical copies, and two of them share every init.",
+    "Exchange between streams should be non-negative and doubly stochastic, that is, diffusive.",
+    "Exchange between streams is useful at 21M parameters and 50M tokens.",
+    "The mixing is static and data-independent, with one temperature for all 24 stages.",
+    "The final readout is a plain mean over streams.",
+    "Optimiser placement and weight decay on the stream logits are neutral.",
+    "Short smoke runs can rank inits."
+   ],
+   "boundary": "Block.combine, Block.forward, Block.mix_logits, Block.read_logits, Block.write_logits, the stream expand/mean in GPT.forward",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "The streams start as identical copies, and two of them share every init."
+    },
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "Exchange between streams should be non-negative and doubly stochastic, that is, diffusive."
+    },
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "Exchange between streams is useful at 21M parameters and 50M tokens."
+    },
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "The mixing is static and data-independent, with one temperature for all 24 stages."
+    },
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "The final readout is a plain mean over streams."
+    },
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "Optimiser placement and weight decay on the stream logits are neutral."
+    },
+    {
+     "from": "depth_stream_mix-in-k06",
+     "text": "Short smoke runs can rank inits."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 32,
+     "clusters": 18,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 7,
+     "clusters": 3,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "depth_norm_init",
+   "name": "State across depth: normalization placement and initializati",
+   "parent": "root",
+   "frame": "Pre-norm RMSNorm (eps 1e-6, learned gain) precedes attention and MLP on the stream read-out, a final RMSNorm precedes the head, and all linear weights start at std 0.02 with branch outputs scaled by 1/sqrt(2 n_layer).",
+   "assumptions": [
+    "Pre-norm only, with no post-branch or output normalization, is sufficient to control residual scale.",
+    "Normalization should act on the collapsed read-out rather than per stream.",
+    "A uniform std 0.02 init is appropriate for all projections regardless of fan-in (compress, expand, rotary, head).",
+    "Scaled residual init is still the right choice when mixing weights, not plain addition, govern the residual.",
+    "Layer 0 should be structurally identical to layer 11 even though its gradient norm and entropy differ sharply.",
+    "The per-channel gains act as temperatures and not as feature selectors. In particular, the final norm under a tied head is not doing feature selection.",
+    "Muon can learn per-input-channel scaling inside `wq`, `compress`, `rotary`, `w_gate` and `w_up` as cheaply as a diagonal gain trained with Adam.",
+    "Attention sharpness is limited by the content-part temperature and not by the unnormalized rotary part.",
+    "A temperature of 1.4x is near-optimal at d_head 64 + 32 rotary dims, at 21M parameters and 1,525 steps.",
+    "Weight decay on the gains is harmful enough to matter within 1,525 steps.",
+    "The scaled branch init (std 0.02/√24 on wo/w_down) stays and does not interact with the scalars.",
+    "A learned scale is needed at every norm, not a fixed constant."
+   ],
+   "boundary": "RMSNorm, Block.n1, Block.n2, GPT.norm, GPT._init, the per-block init loop in GPT.__init__",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "assumptions_added": [
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "The per-channel gains act as temperatures and not as feature selectors. In particular, the final norm under a tied head is not doing feature selection."
+    },
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "Muon can learn per-input-channel scaling inside `wq`, `compress`, `rotary`, `w_gate` and `w_up` as cheaply as a diagonal gain trained with Adam."
+    },
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "Attention sharpness is limited by the content-part temperature and not by the unnormalized rotary part."
+    },
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "A temperature of 1.4x is near-optimal at d_head 64 + 32 rotary dims, at 21M parameters and 1,525 steps."
+    },
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "Weight decay on the gains is harmful enough to matter within 1,525 steps."
+    },
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "The scaled branch init (std 0.02/√24 on wo/w_down) stays and does not interact with the scalars."
+    },
+    {
+     "from": "depth_norm_init-in-k05",
+     "text": "A learned scale is needed at every norm, not a fixed constant."
+    }
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 24,
+     "clusters": 10,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 7,
+     "clusters": 2,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "depth_layer_stac",
+   "name": "State across depth: layer count and block layout",
+   "parent": "root",
+   "frame": "Twelve identical blocks are applied strictly sequentially, each with one attention stage then one MLP stage, with no parameter sharing, skip connections across blocks, or per-layer specialization.",
+   "assumptions": [
+    "Twelve homogeneous blocks is the right depth; a different depth or width trade at equal parameters is untested.",
+    "Attention then MLP in alternation is the only useful ordering; parallel or fused blocks are not considered.",
+    "No block reuses weights, so depth and parameter count are tied together.",
+    "Late layers cannot read early-layer stream states except through the mixing chain.",
+    "Every token passes through every layer with equal compute regardless of difficulty."
+   ],
+   "boundary": "GPT.blocks, the block loop in GPT.forward, Block.__init__ composition, Config.n_layer",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 7,
+     "clusters": 6,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 12,
+     "clusters": 6,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  },
+  {
+   "id": "recipe",
+   "name": "the whole recipe (cross-part changes)",
+   "parent": "root",
+   "frame": "The parts above are tuned one at a time; changes that only make sense together (for example depth with mixing, or data order with the learning schedule) have no single owner.",
+   "assumptions": [
+    "each part can be improved on its own",
+    "the parts interact only through the residual stream",
+    "the best recipe is a sum of the best parts"
+   ],
+   "boundary": "everything except evaluate() and the data loader (a change here may touch two parts)",
+   "directions": [
+    "inward",
+    "outward"
+   ],
+   "stats": {
+    "inward": {
+     "sketches": 0,
+     "clusters": 0,
+     "implemented": 0,
+     "checked": 0
+    },
+    "outward": {
+     "sketches": 0,
+     "clusters": 0,
+     "implemented": 0,
+     "checked": 0
+    }
+   }
+  }
+ ],
+ "inward_share": 0.6
+}

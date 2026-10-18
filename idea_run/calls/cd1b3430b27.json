@@ -1,0 +1,110 @@
+{
+ "call_id": "cd1b3430b27",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "PASS 1 (scratch):\n1. Every branch writes to all four streams with near-equal weight → disjoint writes, one stream reserved for the embedding. [limit-operator leap, kept]\n2. Each block's weights are applied once per forward → the middle six blocks run twice with per-pass stream routing and norms. [kept]\n3. Depth and parameter count are tied → MLPs shared in adjacent pairs, the saved parameters buy six more attention-bearing blocks. [kept]\n4. Every block has the same attention-then-MLP layout → double attention in the first three blocks, MLP-only in the last two. [kept]\n5. Depth is fixed across training phases → six blocks inserted at 25% of the run with zero write weight and copied weights.\n6. Stream mixing is token-independent → mixing logits produced from the read vector (dynamic mHC). Port, dropped.\n7. Streams are mixed but never normalised → per-stream RMS renormalisation after each combine. Close to post-norm, dropped.\n8. Blocks are strictly sequential → two six-block towers on stream pairs merged at the top. Ensemble of shallow nets, dropped.\n9. The two stages of a block run in sequence → parallel attention+MLP reading different streams in late blocks. Weak mechanism, dropped.\n10. The head reads the mean of the streams → out of scope for this part, dropped.\n11. Every token gets every layer → per-sequence depth. Killed by the brief, dropped.\n12. The stage order is attention first → MLP-first in block 0 so attention sees transformed embeddings. Too small, dropped.\n\nIDEA: Embedding stream and write-disjoint streams (limit: stream count to one)\nMECHANISM: Push the stream count to one and the baseline does not change at init: the doubly stochastic mixing preserves the stream sum, the read softmax starts uniform, and the write weights are 1.015 versus 0.995, so all four streams are copies of one residual and the head's mean is exactly a plain residual. The fix the limit suggests is to make the streams carry different things by construction: stream 0 is never written (it stays the token embedding, a free U-Net skip to every block), stream 1 receives only attention writes, stream 2 only MLP writes, stream 3 receives everything; reads start uniform so each block starts from the same function as before but can learn to read token identity, sequence mixing or per-token computation separately, which is what the four-fold memory cost is paying for.\nPREDICTION: Zero parameter and memory change, step time unchanged; the between-stream deviation RMS over mean RMS rises from near zero to above 0.5 by step 200; validation loss down 0.01 to 0.02 with the gain concentrated on rare tokens, which live in the embedding stream.\nTEST: First, a 200-step baseline smoke that prints deviation-over-mean RMS per block; if it is already above 0.3 the limit argument is wrong and the idea dies before any training. Then a 45-step matched smoke against baseline, then 3 seeds.\nSOURCE: own\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every branch writes to every stream with near-equal weight, so the streams are interchangeable copies.\nKEEPS: Four streams, Sinkhorn mixing, softmax reads, the head's mean, all block weights and the optimizer.\nP_SUCCESS: 0.18\nKILL: Train loss at step 45 more than 0.03 nats above the baseline's step-45 loss, or stream deviation still under 0.1 at step 200.\n\nIDEA: Looped middle six with per-pass routing\nMECHANISM: The exam fixes tokens, not compute, and the baseline leaves half its time budget unused; apply blocks 3 to 8 a second time after block 11 is reached in the first pass is wrong, so instead run the stack as 0-2, 3-8, 3-8, 9-11 with the second pass owning its own read, write, mix logits and RMSNorm weights. The routing logits are the per-loop adapter: the same weights act on a differently composed stream state, which is the cheapest form of the LoRA that Relaxed Recursive Transformers needed.\nPREDICTION: Parameters up by about 6,000; step time 1.35x to 1.45x with the second pass checkpointed; peak VRAM at or below baseline because six blocks are recomputed; loss curve slower for the first 100 steps then crossing below baseline; validation loss down 0.02 to 0.04.\nTEST: A 3-step timing and VRAM check first (fail if over 9.5s or over 5.6 GB); then 45 matched steps; then 3 seeds. Control: the same loop without per-pass logits, to attribute the gain.\nSOURCE: https://arxiv.org/abs/2410.20672v2\nTARGET: residual RMS growth, flatter across the 18 effective layers\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A block's weights are applied exactly once per forward pass.\nKEEPS: Twelve unique blocks, all branch weights, the four-stream residual, Muon and AdamW grouping.\nP_SUCCESS: 0.17\nKILL: Train loss at step 45 more than 0.06 nats above baseline, or step time over 9.5s.\n\nIDEA: Paired MLP sharing funds eighteen blocks\nMECHANISM: At 2.4 tokens per parameter the MLPs are the undertrained knowledge stores and attention is cheap in parameters; share each MLP between two adjacent blocks (nine unique MLPs) and spend the saved 7.4M parameters on six more blocks with their own attention, norms and routing. Each shared MLP gets twice the gradient signal per token, and sequence mixing gets 18 unique layers instead of 12.\nPREDICTION: Non-embedding parameters about 21.8M (under the cap); step time about 1.4x with eight of the eighteen blocks checkpointed; peak VRAM under baseline; validation loss down 0.02 to 0.05.\nTEST: Build-only parameter count, then 3-step timing and VRAM, then 45 matched steps. Control: eighteen blocks with twelve unique MLPs cycled, to separate the sharing effect from the depth effect.\nSOURCE: own, builds on https://arxiv.org/abs/2507.10524\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Depth and parameter count move together because no block reuses weights.\nKEEPS: One attention and one MLP stage per block, pre-norm, four-stream mixing, tied head.\nP_SUCCESS: 0.15\nKILL: Train loss at step 45 more than 0.06 nats above baseline, or parameter count over 23.37M.\n\nIDEA: Depth-shaped stage layout\nMECHANISM: Attention entropy in the deepest layers is typically near uniform while early attention does the hard mixing, so move attention budget down the stack: blocks 0 to 2 get a second attention stage (with its own read and write logits), blocks 10 and 11 drop attention and become MLP-only. Net 13 attention stages and 12 MLP stages instead of 12 and 12.\nPREDICTION: Parameters up 0.59M; step time up about 2% plus 2% for checkpointing block 0; peak VRAM within baseline after that checkpoint; validation loss down 0.01, lost entirely if deep attention is not redundant.\nTEST: First print per-layer attention entropy in a 200-step baseline smoke; if the last two blocks are not the highest-entropy layers, drop the idea. Then 45 matched steps, then 3 seeds.\nSOURCE: own, motivated by https://arxiv.org/pdf/2601.20994\nTARGET: attention entropy in deep layers, removed where it is near uniform\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every block has the same attention-then-MLP stage layout.\nKEEPS: Twelve blocks, all stage internals, the four-stream residual, parameter count near baseline.\nP_SUCCESS: 0.12\nKILL: Train loss at step 45 more than 0.03 nats above baseline.\n\nIDEA: Dense depth read over block means\nMECHANISM: DenseFormer's depth-weighted averaging, placed where this recipe already has a softmax read: each stage's read softmax ranges over its four current streams plus one logit per earlier block's stream mean, initialised at minus six so the function starts as the baseline. Late layers can then read early states directly instead of through the mixing chain, which is the interaction with multi-stream mixing the brief lists as open.\nPREDICTION: About 150 added parameters; step time up 3 to 8% from small adds; no added peak memory because earlier block states are already saved by autograd; validation loss down 0.01 to 0.02 and a flatter gradient norm across depth.\nTEST: 3-step timing to confirm the add overhead, then 45 matched steps, then 3 seeds. Inspect learned logits: if no block puts more than 5% weight on a non-adjacent block, the mechanism is unused.\nSOURCE: https://arxiv.org/abs/2402.02622\nTARGET: gradient norm spread, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Thirteen blocks with two checkpointed\nMECHANISM: The parameter headroom is 1.16 blocks and the baseline is parameter-starved relative to its data; add a thirteenth block and checkpoint blocks 0 and 1 so the extra activations fit in the 0.1 GB of free memory.\nPREDICTION: Parameters up 1.83M (under the cap); step time up about 12%; peak VRAM at or below baseline; validation loss down 0.005 to 0.01.\nTEST: Build-only count, 3-step timing and VRAM, then 3 seeds. Range: 13 (candidate) and 11 (control, to confirm loss is still falling with depth at this size).\nSOURCE: https://arxiv.org/abs/2511.18890\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Depth-decayed write scale\nMECHANISM: Residual RMS grows with depth under pre-norm so deep blocks contribute less relative to the stream, the Curse-of-Depth mechanism; initialise each block's write logits so its write weight starts at c divided by the square root of the block index plus one, matching LayerNorm Scaling but applied to the write rather than the norm so attention and MLP keep their input scale.\nPREDICTION: No parameter or time change; residual RMS at block 11 relative to block 0 falls from the baseline's measured ratio; validation loss down 0.005 if deep layers were under-contributing, zero otherwise.\nTEST: Print per-block residual RMS in a 200-step baseline smoke; if growth is under 1.5x the idea has nothing to fix. Sweep c in {1.0, 1.5, 2.0} over 45 matched steps, then 3 seeds on the best.\nSOURCE: https://arxiv.org/pdf/2601.20994\nTARGET: residual RMS growth, down\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 21063,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20476,
+  "total_tokens": 44968
+ },
+ "cost_usd": 2.100075,
+ "duration_ms": 352834,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 44968,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "outward",
+  "seed": "suitcase",
+  "note": "State across depth: layer count and block layout / outward / research",
+  "node": "depth_layer_stac",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 47346,
+ "raw": {
+  "duration_api_ms": 351398,
+  "stop_reason": "end_turn",
+  "session_id": "ecfdd5f2-c365-45d6-938f-641eb217a2a6",
+  "total_cost_usd": 1.46354675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20476,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 21063,
+   "output_tokens_details": {
+    "thinking_tokens": 17237
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20476,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 21063,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20476,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20476
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 21063,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20476,
+    "webSearchRequests": 0,
+    "costUSD": 1.46354675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 17237,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 351518,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 21063,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20476,
+    "total_tokens": 44968
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 21063,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20476,
+    "total_tokens": 44968
+   },
+   "source": "usage"
+  }
+ }
+}

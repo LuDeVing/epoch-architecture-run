@@ -1,0 +1,32 @@
+You are researching ONE part of a machine-learning problem before anyone proposes ideas. Use web search as much as needed (prefer 2026 and 2025 sources: arXiv, lab blogs, the modded-nanoGPT speedrun record log, benchmark write-ups). Read the most relevant results.
+
+GOAL OF THE WHOLE PROBLEM:
+# Problem: lower the validation loss of the nano language model at a fixed budget
+
+GOAL: change nano/train.py so that, trained for exactly 50M tokens on the same data,
+its validation loss is lower than the baseline's. Any part of the model, optimizer,
+schedule or data order may change within the constraints.
+
+PURPOSE: Improve the strongest open architecture at this size: this recipe is the dense skeleton of DeepSeek-V4 and Kimi K3 scaled to 21M parameters (latent attention, QK-norm, four-stream residual mixing), the best model we measured. The goal is invention, not porting: the known tricks of 2026 are already in this skeleton or in the digest, so an idea that merely copies one counts for little. Think like a researcher who understands why each part exists and asks what it still gets wrong: find a mechanism this architecture lacks, a cost it pays for nothing, an assumption its designers inherited without testing, an interaction between two parts nobody has exploited. Be precise, cheap to test, and say why the idea would hold at large scale.
+
+SCOPE OF THIS RUN: only these parts may change; the rest of the recipe (optimization, data, the whole recipe (cross-part changes), objective) stays exactly as it is:
+- inputs and outputs: GPT.tok, GPT.head, GPT.forward loss, Config.vocab_size, tie_embeddings
+- sequence mixing (attention): Attention, rope_cache, apply_rope, Config.n_head, n_kv_head, sliding_window
+- per-token computation: MLP, Config.d_ff
+- state across depth: Block, GPT.
+
+PART UNDER STUDY: Sequence mixing: head count, head structure and output proje
+CURRENT DESIGN OF THIS PART: Six heads of 64 content dims with full multi-head (n_kv_head equals n_head) causal attention over 1024 tokens; head outputs are concatenated and projected by wo, initialized at std 0.02/sqrt(24).
+ASSUMPTIONS OF THIS PART:
+- Six heads of 64 dims is the right split of 384 for this depth; more smaller heads or fewer larger ones were not tested.
+- Every head in every layer attends over the full context with the same mechanism.
+- Head outputs combine by plain concatenation and a linear map, with no per-head gating or value-path nonlinearity.
+- GQA is unused because n_kv_head equals n_head, even though the latent already shares KV across heads.
+- The output projection needs no norm or scaling despite layer-0 attention gradient norm being 10x the rest.
+
+Return ONLY a JSON object with keys:
+  "known": list of {"name", "mechanism" (one sentence), "effect" (what was measured, with numbers if given), "where" (model size / setting), "url"}  -- techniques that were tried for this part
+  "failed": list of {"name", "why", "url"}  -- techniques reported not to help or not to transfer
+  "open": list of {"direction", "why", "url"}  -- directions named but untested at small scale
+  "queries": the search queries you used
+Rules: every entry needs a real URL from your search or reading; do not include anything you cannot source; 4 to 10 known entries, 0 to 5 failed, 0 to 5 open; no commentary outside the JSON.

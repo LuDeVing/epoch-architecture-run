@@ -1,0 +1,120 @@
+{
+ "call_id": "cf9b3deef4d",
+ "role": "research",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "{\"known\":[{\"name\":\"Partial RoPE (rotate only a fraction of dims)\",\"mechanism\":\"Apply rotary to only a small slice of each head's dimensions and leave the rest position-free.\",\"effect\":\"Rotating about 10% of dims converges close to full RoPE, with up to 10x RoPE-cache savings. RoPE on only 2 channels (4%) or none ends at higher final loss. NoPE runs were sometimes unstable, and minimal RoPE or QK-Norm fixed that, though QK-Norm alone converged to a higher loss.\",\"where\":\"Sequence lengths 1024, 4096 and 8192, several datasets and model sizes (Khan et al. 2026)\",\"url\":\"https://arxiv.org/abs/2603.11611\"},{\"name\":\"LeRoPE: learnable per-frequency RoPE\",\"mechanism\":\"Learn one scalar per rotary frequency instead of using a fixed geometric sequence from base theta.\",\"effect\":\"Beats both RoPE and partial RoPE at every scale. At the largest scale RoPE needs 3.4% more FLOPs to match it. A high-norm positional band emerges in the learned frequencies.\",\"where\":\"52M to 2.5B parameters, trained from scratch\",\"url\":\"https://arxiv.org/abs/2607.10134\"},{\"name\":\"Partial RoPE (50% of head dims) in modded-nanoGPT\",\"mechanism\":\"Rotate half the head dims. The long sliding windows attend mostly to the unrotated (stationary) dims.\",\"effect\":\"Used in the late-2025 speedrun records. The write-up says the long windows mostly use the unrotated dims, which helps window extension. I found no isolated ablation numbers.\",\"where\":\"modded-nanoGPT, GPT-2-small-scale speedrun\",\"url\":\"https://www.greaterwrong.com/posts/j3gp8tebQiFJqzBgg/how-the-nanogpt-speedrun-wr-dropped-by-20-in-3-months\"},{\"name\":\"QK-Norm in the speedrun recipe\",\"mechanism\":\"RMS-normalize queries and keys before the dot product.\",\"effect\":\"Part of the 15.2-minute record, alongside padded embeddings, ReLU², and zero-init projections. No separate ablation figure was given.\",\"where\":\"modded-nanoGPT, GPT-2-small scale\",\"url\":\"https://github.com/KellerJordan/modded-nanogpt\"},{\"name\":\"Partial RoPE with layer-wise LN scale (Parameter Golf)\",\"mechanism\":\"Rotate only part of q and k, typically the first half, so the remaining dims learn position-agnostic features. It was paired with layer-wise LayerNorm scaling.\",\"effect\":\"Submission #4 reached 1.1248 BPB. The page gives no separate ablation and does not isolate partial RoPE's contribution.\",\"where\":\"OpenAI Parameter Golf, tiny-model leaderboard\",\"url\":\"https://www.codesota.com/parameter-golf/architecture-tricks\"},{\"name\":\"QKNorm with a learnable scale g\",\"mechanism\":\"L2-normalize q and k, then multiply the logits by a learnable scalar g instead of dividing by sqrt(d).\",\"effect\":\"Average gain of 0.928 BLEU on five low-resource translation pairs. A 2026 follow-up generalizes it to an Lp norm and keeps a learnable positive scale alpha.\",\"where\":\"Small translation models (TED Talks, IWSLT'15)\",\"url\":\"https://arxiv.org/pdf/2010.04245\"},{\"name\":\"Scalable-Softmax (SSMax)\",\"mechanism\":\"Scale the logits by s·log n, with a learnable s, so that attention does not flatten as context n grows.\",\"effect\":\"The abstract reports faster loss reduction in pretraining and clearly better long-context and key-retrieval performance. I did not read the paper's tables.\",\"where\":\"Pretraining experiments in the paper; sizes not checked\",\"url\":\"https://arxiv.org/pdf/2501.19399\"},{\"name\":\"Head-specific sigmoid output gate after SDPA\",\"mechanism\":\"A query-dependent sigmoid gate on the attention output adds non-linearity and sparsity.\",\"effect\":\"Improves quality and reduces massive activations and attention sinks. It also helps long-context extrapolation.\",\"where\":\"30 variants of 15B MoE and 1.7B dense models, 3.5T tokens (Qwen)\",\"url\":\"https://proceedings.neurips.cc/paper_files/paper/2025/hash/904e89bb4e632e75fb47f093b620b257-Abstract-Conference.html\"},{\"name\":\"Slowing upper-layer Q/K learning early in training\",\"mechanism\":\"Temporarily lower the learning rate on only the upper-layer query/key projections so attention does not sharpen before lower-layer features stabilize.\",\"effect\":\"Improves final perplexity and downstream accuracy. It is nearly unnecessary in LLaMA-style blocks, because gated FFNs are what suppress upstream residual writes.\",\"where\":\"GPT-style pretraining (2026 preprint); sizes not checked\",\"url\":\"https://arxiv.org/abs/2605.10504\"}],\"failed\":[{\"name\":\"Learnable per-head sink logit (GPT-OSS style)\",\"why\":\"MiniMax Sparse Attention found no clear or consistent perplexity gain, and the first token still acted as the sink, so they left it out. A separate paper reports that the sink-logit gain is largest at 10M parameters and shrinks by 124M, so it may not transfer to larger models.\",\"url\":\"https://arxiv.org/pdf/2606.13392\"},{\"name\":\"QK-Norm as the only positional or stability fix\",\"why\":\"In the partial-RoPE study, NoPE with QK-Norm still converged to a higher loss than runs with 10% or more RoPE. QK-Norm stabilizes training but does not replace positional information.\",\"url\":\"https://arxiv.org/abs/2603.11611\"},{\"name\":\"Learned per-token temperature without clipping\",\"why\":\"A 2025 paper reports that the temperature drifts far from baseline and degrades performance, so it has to be clipped to a fixed range.\",\"url\":\"https://arxiv.org/pdf/2310.12956\"}],\"open\":[{\"direction\":\"Learnable or per-layer/per-head temperature (QK gain) on top of QK-RMSNorm, possibly with an log n term\",\"why\":\"The fixed 1/sqrt(96) scale ignores layers where max logits reach 22.7 and entropy falls to 0.67. SSMax and QKNorm's learnable g motivate a test, but I found no small-scale ablation against a fixed scale in an MLA-style model.\",\"url\":\"https://arxiv.org/pdf/2501.19399\"},{\"direction\":\"Per-layer or learned rotary frequencies and theta, including the width of the rotary key\",\"why\":\"LeRoPE finds a learned high-norm positional band at 52M to 2.5B parameters. The partial-RoPE study finds a 4% slice too small and 10% enough. I found no MLA-specific sweep of the decoupled-RoPE dimension count trained from scratch.\",\"url\":\"https://arxiv.org/abs/2607.10134\"},{\"direction\":\"NoPE and RoPE layer interleaving, with RoPE concentrated in early layers\",\"why\":\"RNoPE-style alternation helps very long-context retrieval, and RoPE is said to matter most in early layers. I found no result at a 1024 context and 21M parameters.\",\"url\":\"https://arxiv.org/pdf/2505.21487\"},{\"direction\":\"Output gate on attention, as a replacement for a sink\",\"why\":\"The gate removes sinks and massive activations in Qwen-scale models. I found no sub-100M ablation combined with decoupled RoPE and QK-norm.\",\"url\":\"https://proceedings.neurips.cc/paper_files/paper/2025/hash/904e89bb4e632e75fb47f093b620b257-Abstract-Conference.html\"},{\"direction\":\"Decoupled-RoPE dimension ablation inside MLA\",\"why\":\"The DeepSeek review notes that no ablation of the decoupled RoPE has been reported. The only dimension sweep I found, 4 vs 8 dims on SmolLM-135M, converted a pretrained model and did not train MLA from scratch.\",\"url\":\"https://arxiv.org/pdf/2503.11486\"}],\"queries\":[\"decoupled RoPE MLA partial rotary dimensions ablation small model\",\"QK-norm learnable temperature attention scale softmax logit growth entropy collapse\",\"modded-nanogpt speedrun record log partial key offset QK norm RoPE half-truncate attention\",\"NoPE layers interleaved RoPE per-layer rope theta attention sink learned softmax scaling length 2025\",\"Gated attention for LLMs non-linearity sparsity attention-sink-free Qwen\",\"Scalable-Softmax Is Superior for Attention log n scaling\",\"Query-Key Normalization for Transformers learnable scale g\",\"Khan 2026 partial RoPE 10% dimensions training dynamics convergence rotary\",\"attention sink learned sink logit softmax-off-by-one gpt-oss small model pretraining ablation\"]}",
+ "usage": {
+  "input_tokens": 284645,
+  "output_tokens": 19366,
+  "cache_read_input_tokens": 68349,
+  "cache_creation_input_tokens": 19068,
+  "total_tokens": 391428
+ },
+ "cost_usd": 1.236435,
+ "duration_ms": 92151,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 4000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 391428,
+ "over_cap": true,
+ "meta": {
+  "card": "research",
+  "operator": "attn_rope_norm",
+  "note": "web search: Sequence mixing: decoupled rotary dims and QK-norm"
+ },
+ "prompt_chars": 3345,
+ "raw": {
+  "duration_api_ms": 132732,
+  "stop_reason": "end_turn",
+  "session_id": "7009a2ad-620a-4c84-b4ac-dc0c4f2f554b",
+  "total_cost_usd": 0.26068670000000005,
+  "usage": {
+   "input_tokens": 12,
+   "cache_creation_input_tokens": 19068,
+   "cache_read_input_tokens": 68349,
+   "output_tokens": 5201,
+   "output_tokens_details": {
+    "thinking_tokens": 150
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19068,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 3111,
+     "cache_read_input_tokens": 18382,
+     "cache_creation_input_tokens": 2493,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2493
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 12,
+    "outputTokens": 5201,
+    "cacheReadInputTokens": 68349,
+    "cacheCreationInputTokens": 19068,
+    "webSearchRequests": 0,
+    "costUSD": 0.1351409,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 150,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   },
+   "claude-haiku-5-5": {
+    "inputTokens": 284633,
+    "outputTokens": 14165,
+    "cacheReadInputTokens": 0,
+    "cacheCreationInputTokens": 0,
+    "webSearchRequests": 9,
+    "costUSD": 0.1255458,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 5515,
+    "canonicalModel": "claude-haiku-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 19,
+  "duration_ms": 90885,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 12,
+    "output_tokens": 5201,
+    "cache_read_input_tokens": 68349,
+    "cache_creation_input_tokens": 19068,
+    "total_tokens": 92630
+   },
+   "model_usage_sum": {
+    "input_tokens": 284645,
+    "output_tokens": 19366,
+    "cache_read_input_tokens": 68349,
+    "cache_creation_input_tokens": 19068,
+    "total_tokens": 391428
+   },
+   "source": "modelUsage"
+  }
+ }
+}

@@ -1,0 +1,110 @@
+{
+ "call_id": "c78fa774372",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "Reading of the brief I am working under: the paradigm stays softmax multi-head attention with concatenated head outputs and a linear wo, every head full-context. The leaps below break rules that sit outside that list (scores content-dependent in every layer, one output basis per layer, head geometry constant over depth, a token attends to itself).\n\nPASS 1 (scratch):\n\nSubtract operator over the components of this part:\n- wo (12 x 147k params): removed, heads write disjoint 64-dim slices and the 1/sqrt(24) branch damping is lost. Measurements say it buys cross-head mixing and a small branch at init; nothing in the table ties it to a layer. Defensible removal: the per-layer copy, not the map. Keep as removal 1 (share one wo across depth).\n- q.k scores in layer 0: frozen to a fixed kernel, the layer becomes positional averaging. Entropy 0.957 says layer 0 is already almost flat at step 100, and its 10x gradient is the one anomaly in the attention column. Keep as removal 2.\n- head split 6 x 64: frozen to 1 x 384, one pattern per layer. Entropy spread across layers (0.67 to 0.96) says different layers want different sharpness, not that heads are redundant. Not defended.\n- diagonal of the causal mask: removed, a token cannot read its own value. First-token mass 0.003 says there is no sink, so self is the likely sink. A removal worth testing but not defended by a measurement.\n- scaled wo init: frozen to zero. Under Muon the init washes out within ~50 steps. Not worth a slot beyond a tune.\nReinvestments: removal 1 frees 1.77M params, reinvested in 8 heads of 64 everywhere. Removal 2 frees layer-0 q/k and their gradients, reinvested in a 12-kernel decay bank at layer 0.\n\nTwelve seeds, one rule each:\n1. Layer 0 scores are a fixed bank of causal decay kernels, no q/k (breaks: scores are content-dependent in every layer).\n2. One wo shared by all 12 layers (breaks: each layer owns its output basis).\n3. Head geometry varies with depth, 12x32 shallow to 3x128 deep (breaks: head count constant over depth).\n4. Diagonal masked out of the causal mask beyond position 0 (breaks: a token attends to itself).\n5. Softmax normalizer shared across all heads of a layer (breaks: heads normalize independently). Dropped: needs materialized scores, 1.2 GB over the memory headroom.\n6. Attention map of layer l reused by layer l+1 (breaks: each layer computes its own scores). Dropped: close to a port of cross-layer sharing.\n7. Attention output scaled by sqrt of the effective attended count (breaks: output magnitude independent of sharpness). Dropped: no measurement supports it.\n8. Head outputs written to different residual streams (breaks: all heads write to one mixed residual). Dropped: touches Block.\n9. Keys used as values on half the layers (breaks: separate K and V). Dropped: a Gemma 4 port and outside this part.\n10. Fewer larger heads in every layer, 3x128 (breaks: nothing, a tune).\n11. Score scale 1/sqrt(64) instead of 1/sqrt(96) (a tune).\n12. Unequal head widths inside one layer (breaks: equal heads). Dropped: wq shape, outside this part.\n\nKept as farthest from brief, findings and each other: 1, 3, 4. Seed 2 is the operator's own leap and is written as the fourth.\n\nIDEA: Layer-0 decay-kernel bank\nMECHANISM: Starting row: attention grad norm in layer 0 is 0.29, ten times its neighbours, on all three seeds. Three rival causes: (a) parameterization artifact, layer 0 reads the raw 0.02-scale embedding and the RMSNorm Jacobian scales weight gradients by 1/rms(input), so the 10x is a scale that Muon's orthogonalized update ignores anyway; (b) layer 0 genuinely carries the most loss-sensitive function (previous-token and bigram copying, recall tokens at 4.5 vs 6.7); (c) layer 0 sits in the flat-attention regime (entropy 0.957), where the softmax Jacobian is maximal and q/k receive gradient from every key, a regime effect that is also a phase-of-measurement artifact if later checkpoints show it gone. Five-minute probe on the saved checkpoint: per-matrix gradient norms (wq, rotary, compress, expand, wo) in layers 0 and 1 on one batch, plus the parameterization-free dL/d(norm output) norm per layer; if wq and rotary dominate and the norm-output gradient is not 10x, rival (c) or (a) holds, if expand and wo dominate, (b) holds. If the least popular rival (c) is true, the content scores at layer 0 are noise that costs a layer: replace layer 0's SDPA scores with a fixed bank of causal exponential kernels, one per head, time constants 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512 and flat, implemented by passing a zeroed query and the log-kernel as the additive mask, and reshape layer 0's values to 12 heads of 32 so each kernel gets its own value slice. The 0.5 kernel is a previous-token head from step 0, which is what induction in deeper layers needs and what a flat layer 0 only reaches after sharpening. The late-position gap (+0.46 nats at step 100) is what a flat 1024-token average does to a model that only knows local statistics, so local kernels should close it early.\nPREDICTION: Loss at steps 26 and 51 below baseline by 0.05 to 0.1 nats, final validation loss lower by 0.005 to 0.015; step time within 2 percent (one mask-based SDPA replaces one is_causal SDPA, layer-0 q/k get no gradient); parameter count unchanged (wq of layer 0 stays but is unused).\nTEST: 100-step smoke run, seed 0, matched steps against the baseline curve; a 3-step timing; the probe above on the baseline checkpoint first, since a wo-dominated layer-0 gradient kills the premise before any training.\nSOURCE: own\nTARGET: loss at late positions (down, the +0.459 gap at step 100) and gradient norm spread (layer-0 attention gradient removed from the spread).\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Attention scores do not need to depend on content in the first layer, a fixed positional kernel bank is enough there.\nKEEPS: Layers 1 to 11 unchanged, layer 0 keeps its latent value path, wo, write weights and stream mixing.\nP_SUCCESS: 0.15\nKILL: Matched-step loss at step 45 above 6.70 (baseline about 6.70 by interpolation), i.e. no early-learning gain at all, discards it; if the final checkpoint of the baseline shows layer-0 entropy below 0.7, the premise is dead before training.\n\nIDEA: One shared wo, reinvested in 8 heads of 64\nMECHANISM: The residual space is the same at every layer (every block reads it through a norm and writes into it), so a per-layer output basis is a luxury the measurements never justify. Share one wo across the 12 layers and spend the freed 1.77M parameters on 8 heads of 64 in every layer (head width decoupled from d_model, wq to 8x96, expand to 2x8x64, shared wo 512 to 384). Per-layer expressivity survives because the OV circuit per head is expand(l,h) composed with the shared wo slice, and expand stays per layer. Net parameters fall by about 0.3M while query-key capacity rises by a third, which is the capacity the sharp deep layers (max logit 22, entropy 0.67) are using.\nPREDICTION: Parameters about 20.95M non-embedding (under the cap by construction); step time up 5 to 8 percent (attention projections and scores grow by a third, output head unchanged); final validation loss lower by 0.004 to 0.01; the early curve (first 50 steps) slightly slower because the shared wo receives 12 conflicting gradients.\nTEST: Build-only for the parameter count; 3-step timing; 100-step matched smoke run against the baseline curve; ablation variant with shared wo and 6 heads to isolate sharing from head count.\nSOURCE: own\nTARGET: validation loss only (attention entropy in deep layers expected to fall slightly).\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Each layer needs its own output projection; one 512 to 384 map shared across depth is enough.\nKEEPS: Per-layer q, latent compress and expand, per-layer norms and stream mixing, softmax attention, concatenation of heads.\nP_SUCCESS: 0.15\nKILL: Matched-step loss at step 45 above 6.78 discards it; a step time above 5.3 s on the 3-step timing discards the 8-head reinvestment and leaves only the sharing variant.\n\nIDEA: Head geometry that follows the entropy profile\nMECHANISM: Entropy falls monotonically with depth (0.957, 0.903, 0.854, 0.804 in layers 0 to 3, 0.67 to 0.76 in layers 8 to 11) and max logit rises from 7.8 to 22. Shallow layers do diffuse positional mixing, where many small heads with different patterns help; deep layers do sharp retrieval, where a wider key gives a higher-precision match. Give layers 0 to 3 twelve heads of 32, layers 4 to 7 six of 64, layers 8 to 11 three of 128, with rotary dims fixed at 32 per head. The total attention compute is nearly unchanged and the head width goes where the sharpness is.\nPREDICTION: Parameters up by about 0.15M; step time within 3 percent of baseline; final validation loss lower by 0.003 to 0.008; deep-layer entropy lower and max logit higher than baseline, shallow entropy unchanged.\nTEST: Build-only count; 3-step timing; 100-step matched smoke; the cheap falsifier is the reversed profile (3x128 shallow, 12x32 deep), which must be worse if the mechanism is real rather than head-count noise.\nSOURCE: own\nTARGET: attention entropy in deep layers (down) and max attention logit (up in layers 8 to 11).\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Head count and head width need not be constant across depth; they should track the sharpness each depth already shows.\nKEEPS: Six-head-equivalent compute, 384 total content width per layer, same latent, rope, QK-norm, wo and mixing.\nP_SUCCESS: 0.12\nKILL: Matched-step loss at step 45 above 6.75, or the reversed profile beating the proposed one at step 100, discards it.\n\nIDEA: Self-excluded attention\nMECHANISM: Mask the diagonal out of the causal mask for positions 1 and beyond, so a head cannot read the current token's own value. The self path is a per-token linear map the residual and MLP already supply, and first-token attention mass of 0.003 says the sink is not at position 0, which leaves self as the likely place heads park mass when they have nothing to retrieve. Removing it forces the attention budget onto context and removes the cheapest way to be useless; the risk is that the sink was load-bearing.\nPREDICTION: Parameter count unchanged; step time up 3 to 6 percent (explicit mask loses the is_causal fast path); recall-token loss lower by 0.03 to 0.06 at matched steps; final validation loss lower by 0.003 to 0.008, or worse by more than 0.01 if the sink mattered, which the test resolves either way.\nTEST: 3-step timing for the mask path; 100-step matched smoke with recall-token loss and first-token mass logged; if first-token mass jumps above 0.05 the model has moved the sink rather than lost it, and the gain, if any, comes from the sink moving.\nSOURCE: own\nTARGET: recall-token loss (down) and first-token attention mass (expected up, as the diagnostic of where the sink goes).\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A token attends to itself; here it may not, except at position 0.\nKEEPS: Full causal context, softmax, all projections, norms and mixing unchanged.\nP_SUCCESS: 0.1\nKILL: Matched-step loss at step 45 above 6.80 discards it.\n\nIDEA: Score scale matched to the normalized dims\nMECHANISM: SDPA scales q.k by 1/sqrt(96) because the concatenated head is 96 wide, but only the 64 content dims are RMS-normalized to unit scale; the 32 rotary dims are unnormalized and small. The content logit is therefore capped near 64/sqrt(96) = 6.5 at unit gain, and the measured layer-0 max logit of 7.8 sits right on that cap, so every sharpening in deeper layers has had to come from growing the q_norm and k_norm gains against AdamW's weight decay of 0.1 on them. Set the scale to 1/sqrt(64) (or sweep) so the normalized path alone can reach useful sharpness without fighting decay.\nPREDICTION: No parameter or time change; max attention logit higher in layers 1 to 11 by 10 to 20 percent at step 100, deep entropy lower by 0.02 to 0.04; final validation loss lower by 0.002 to 0.006.\nTEST: 100-step matched smoke over the scale set {1/sqrt(96), 1/8, 1/6.5, 1/5}; the sweep range is 1/sqrt(96) to 1/5; a monotone curve to 1/5 that then reverses locates the optimum, a flat curve kills the idea.\nSOURCE: own\nTARGET: max attention logit (up) and attention entropy in deep layers (down).\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Per-head temperature ladder in mid layers\nMECHANISM: Starting row: attention grad norm in layer 2 is 0.0259, below the two-neighbour prediction by 0.004 on all three seeds. Three rival causes: (a) measurement artifact, the attention column is U-shaped with its minimum at layer 2 and a two-neighbour linear prediction always flags the minimum of a convex curve as a dip; (b) layer 2 duplicates the positional mixing of layers 1 and 3, so the loss is insensitive to its output; (c) the six heads of layer 2 have collapsed onto near-identical patterns (all start symmetric and in the same diffuse regime), so their gradients partly cancel through wo. Five-minute probe on the saved checkpoint: pairwise cosine similarity of the six head attention maps per layer on one batch, plus per-head zero-ablation loss deltas; collapse (c) shows as high within-layer similarity specific to layer 2, redundancy (b) as small ablation deltas with distinct heads, artifact (a) as neither. If the least popular rival (c) is true, break the head symmetry at init with a fixed per-head temperature ladder: multiply head h's query by a factor from 0.5 to 2 geometrically before SDPA, so heads start in different sharpness regimes and cannot collapse onto one pattern.\nPREDICTION: No parameter or time change; within-layer head similarity in layers 1 to 4 lower than baseline at step 100; attention grad norm at layer 2 within the trend of its neighbours; final validation loss lower by 0.002 to 0.005.\nTEST: The probe above first; then a 100-step matched smoke with ladders {0.7 to 1.4, 0.5 to 2, 0.35 to 2.8}; applied to all layers and to layers 1 to 4 only.\nSOURCE: own\nTARGET: gradient norm spread (layer-2 attention dip removed) and attention entropy in deep layers (spread across heads rather than mean).\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Context-length-scaled softmax (SSMax) for late positions\nMECHANISM: The late-position gap (+0.459 nats, positions 256 to 1024 against 0 to 64) is the signature of softmax dilution: with 1024 keys, a fixed logit scale spreads mass thinner than it does over 64 keys, so retrieval at late positions needs logits that grow with log of the key count. Scalable-Softmax multiplies the scale by s times log(n) per query position, which keeps the sharpest key's share constant as n grows; here it is one extra per-query multiplier on q before SDPA, with s learnable per head.\nPREDICTION: Parameters up by 72 scalars; step time within 1 percent; late-minus-early position gap shrinks by 0.1 to 0.2 nats at step 100; final validation loss lower by 0.003 to 0.008, because the exam's windows are the full 1024 where the gap lives.\nTEST: 100-step matched smoke with the per-position loss split logged; a fixed s=0.43 (the paper's value) against learnable s; if the gap at step 100 does not shrink by at least 0.05 nats the mechanism is absent at this scale.\nSOURCE: https://arxiv.org/abs/2501.19399\nTARGET: loss at late positions (down).\nSCOPE: validation loss at 1024\nKIND: port",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 24493,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 19040,
+  "total_tokens": 46962
+ },
+ "cost_usd": 2.345755,
+ "duration_ms": 377731,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 46962,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:diagnosis",
+  "operator": "inward",
+  "seed": "",
+  "note": "Sequence mixing: head count, head structure and output proje / inward / diagnosis",
+  "node": "attn_heads_outpu",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 42561,
+ "raw": {
+  "duration_api_ms": 376222,
+  "stop_reason": "end_turn",
+  "session_id": "38e9f87e-23b0-414c-8f97-7e83ebcf6250",
+  "total_cost_usd": 1.60632675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 19040,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 24493,
+   "output_tokens_details": {
+    "thinking_tokens": 18523
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19040,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 24493,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 19040,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 19040
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 24493,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 19040,
+    "webSearchRequests": 0,
+    "costUSD": 1.60632675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 18523,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 376347,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 24493,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19040,
+    "total_tokens": 46962
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 24493,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19040,
+    "total_tokens": 46962
+   },
+   "source": "usage"
+  }
+ }
+}

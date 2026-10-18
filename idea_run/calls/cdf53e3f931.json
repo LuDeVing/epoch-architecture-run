@@ -1,0 +1,110 @@
+{
+ "call_id": "cdf53e3f931",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "CHAIN:\nL1: Replace the q_norm/k_norm gains with exp(γ) and add a per-head exp(τ_eff,h) on q -> higher effective attention temperature in deep layers during training | quantity: per layer, exp(τ_h)·mean(g_q⊙g_k) for content, and exp(τ_h) for the rotary part | baseline: unmeasured (gains are initialised at 1; no checkpoint dump exists) | expect: up 10–50% in layers 6–11 by step 300; layers 0–2 flat or down | breaks if: |τ_eff| < 0.05 in every head and the gain products match a baseline dump at the same step\nL2: Higher temperature -> larger max attention logit in deep layers | quantity: max attention logit by layer | baseline: layers 7–11 = 19.75, 22.75, 20.12, 20.88, 16.62 at step 100 | expect: up 5–30% against baseline at the same step (300) | breaks if: τ rises but max logit does not move, which would mean the rotary part sets the max and τ only rescales the content part that does not\nL3: Larger deep logits -> deep attention sharpens earlier | quantity: attention entropy, layers 6–11 | baseline: 0.698, 0.704, 0.705, 0.667, 0.711, 0.763 at step 100 | expect: down 0.02–0.08 at steps 100–300 | breaks if: entropy is unchanged within seed spread\nL4: Sharper deep attention -> better copying/recall | quantity: recall-token loss (bigram already seen in the window) | baseline: 4.475 vs 6.704 for the rest | expect: recall loss down 0.02–0.10; non-recall within ±0.01 | breaks if: recall loss does not fall more than non-recall loss\nL5: -> exam validation loss at 50M tokens | quantity: exam val_loss | baseline: pooled baseline mean | expect: down 0.005–0.015 | breaks if: one-sided Welch over 3 or more seeds misses p < 0.01 at a 0.005 margin\nWEAKEST: L1. Its premise is that weight decay holds the gains below what attention needs. That is unmeasured, and the step-100 numbers argue against content gains being the source of the 22.7 logit (see Q1).\n\nQUESTIONS:\nQ1: Is the measured max logit of 22.75 (layer 8, step 100) produced by the RMS-normed content part or by the unnormalised rotary part? | decides: apply exp(τ) to the whole q (content + rotary) vs only to qc\nA1: By step 100 the content part cannot be the main source. The cumulative AdamW lr multiplier over steps 1–100 is about 15 + 70 = 85, so each gain element moved by at most about 85 × 3e-3 ≈ 0.26 (Adam's per-step move is roughly bounded by lr). That gives g ≤ ~1.26 and a perfectly aligned content logit ≤ 64·1.26²/√96 ≈ 10.4. Most of the 22.75 must come from qr·kr/√96. Those vectors come from wq and self.rotary with no norm, so their scale is set by Muon. The idea's \"gains grew to 1.9\" is therefore inferred, not observed. Scaling the whole q is the faithful build, but the builder must log the content and rotary max logits separately.\n\nQ2: Is AdamW decay actually binding on the gains? | decides: ship the bundle (exp(γ) + τ) vs τ alone with linear gains\nA2: Pure decay over the run is a factor of exp(−3e-4 × ~1281 effective steps) ≈ 0.68. Adam moves each element by up to 3e-3 per step against a decay pull of 5.7e-4 at g = 1.9. The equilibrium needs a gradient signal-to-noise ratio of only m/√v = wd·g ≈ 0.19, so the decay binds only where that ratio is weak. Whether it does is unknown until the baseline model.pt gains are dumped.\n\nQ3: Does the baseline already have any per-head content temperature? | decides: τ per head (6 per layer) vs one τ per layer\nA3: No. q_norm and k_norm are RMSNorm(64) applied on the last dim of (B,H,T,64), so the 64 gains are shared across all 6 heads. Each head's content logit scale is identical. Per-head τ is new expressiveness and may be the real active ingredient, more than the decay-proofing. Build per-head as specified, and treat \"τ-only\" as the main ablation.\n\nQ4: How should a per-head scale go into SDPA? | decides: pre-multiply q by exp(τ_eff)[None,:,None,None] with the default scale vs materialise QKᵀ with a tensor scale\nA4: The `scale` argument of `F.scaled_dot_product_attention` takes only a Python float. Pre-multiplying q keeps the fused flash/efficient kernel and costs one extra (4,6,1024,96) bf16 tensor (~4.7 MB per layer). Materialising 4×6×1024×1024 scores per layer would cost VRAM and step time against C4. Use the pre-multiply.\n\nQ5: Which soft clip keeps τ = 0 exactly at 1/√96? | decides: τ_eff = 3·σ(τ − ln 2) − 1 vs hard clamp(τ, −1, 2)\nA5: The sigmoid form maps τ = 0 to exactly 0, ranges over (−1, 2), and has slope 2/3 at 0, so τ learns about 2/3 as fast. A hard clamp has zero gradient outside the range, so a head can get stuck at the bound. A centred tanh does not give 0 at τ = 0. Use the sigmoid form. Weight decay on the raw τ then returns it to the unit scale, which is the intended fixed point.\n\nQ6: Does exp(γ) change more than the decay fixed point? | decides: bundle γ-reparam and τ in one arm vs add a control arm with linear gains + τ\nA6: Yes. Adam's update on γ is multiplicative, so the effective step on g is lr·g: about 1.9× faster at g = 1.9 and slower below 1. The decay pull at the same g also drops about 3× (wd·ln 1.9 = 0.064 vs wd·1.9 = 0.19). Any result therefore confounds \"decay-proof\" with \"faster gain learning\". A third arm is needed to attribute a win.\n\nQ7: Can the 45-step smoke test discriminate at all? | decides: 45-step kill check vs a 300-step matched loss_curve comparison\nA7: With --smoke-steps 45 the schedule compresses: warmup 1 step, cooldown from step 31. Total multiplier is about 31 + 7 = 38, so γ and τ move ≤ ~0.11 and the temperature changes by ≤ ~8%. The 45-step check can catch breakage (the +0.02 kill) but cannot show the mechanism. L1–L3 need ≥300 steps with per-layer logit and entropy dumps.\n\nQ8: How exactly is \"gain norm within 1.15 of 1.0\" measured? | decides: kill on RMS(g) per norm vs on mean(g_q⊙g_k) per layer\nA8: The L2 norm of the initial 64-vector is 8, so the criterion must mean RMS or mean. The quantity that multiplies the logit is Σ_d g_q,d·g_k,d·q̂_d·k̂_d, so mean(g_q⊙g_k) per layer is the right metric. A kill threshold of 1.15² ≈ 1.32 on the product is equivalent.\n\nQ9: Is an upper bound of 2 safe? | decides: τ_max = 2 (7.4× logits) vs τ_max = ln 3 (3×)\nA9: Unknown. QK-norm is the current guard against logit blow-up. At 7.4×, content logits could reach about 7.4 × 6.5 ≈ 48, and the unbounded rotary part could exceed that. fp32 softmax inside the kernels will not overflow, but entropy collapse and loss spikes are possible. Keep 2 as the idea says, and log max τ_eff per layer and loss spikes.\n\nQ10: Is there prior evidence at this scale? | decides: prioritise this over the other OPEN temperature variants vs not\nA10: QKNorm with a learnable g gave +0.928 BLEU on small MT models (https://arxiv.org/pdf/2010.04245). SSMax reports faster pretraining loss reduction (https://arxiv.org/pdf/2501.19399). Unclipped learned per-token temperature drifted and hurt performance (https://arxiv.org/pdf/2310.12956). I know of no sub-100M LM ablation with MLA and decoupled RoPE. Clipping is supported by that evidence; the size of the effect is unknown.\n\nKNOWN:\n- q_norm and k_norm are RMSNorm(64), one pair per Attention, applied to (B,H,T,64). Their weights are shared across the 6 heads, giving 128 gains per layer and 1536 total [script]\n- Every 1-D parameter, including norm gains, goes to AdamW with lr 3e-3 and weight_decay 0.1. Decay per step at peak is 3e-4 [script]\n- total_steps = int(50e6/32768) = 1525; warmup 30 steps; cooldown from step 1067; summed lr multiplier ≈ 1281 [script]\n- With no gradient, decay alone shrinks a gain to about 0.68 over the run [belief]\n- The SDPA default scale is 1/√96, because q and k are 64 content + 32 rotary dims [script]\n- qr (from wq) and kr (from self.rotary, shared across heads) are not normalised. Their scale is set by Muon with lr 0.02 and wd 0.1, i.e. decay 2e-3 per step [script]\n- At step 100, content gains can have moved by at most ~0.26, so content max logit ≤ ~10.4. The measured 22.75 must be mostly rotary-driven [belief]\n- Max attention logit at step 100 by layer: 7.81, 15.5, 13.5, 18.12, 15.5, 16.0, 17.38, 19.75, 22.75, 20.12, 20.88, 16.62 [measured]\n- Entropy is lowest at layer 9 (0.667) and highest at layer 0 (0.957). First-token mass is ≤ 0.006 everywhere, so there are no strong sinks [measured]\n- Layers are indexed 0–11. The prediction's \"layers 8 to 12\" should read 7–11 or 8–11 [script]\n- `F.scaled_dot_product_attention(scale=)` accepts only a float, so per-head τ must be applied by pre-multiplying q [belief]\n- Use τ_eff = 3·σ(τ − ln 2) − 1, which gives exactly 0 at τ = 0, range (−1, 2), slope 2/3 [belief]\n- Change only q_norm and k_norm, through a new class. Do not touch the global RMSNorm used by n1, n2, latent_norm and the final norm [script]\n- Initialise γ = 0 and τ = 0, so step 0 is bit-identical in function to the baseline [belief]\n- The parameter delta is +72 (12 layers × 6 heads); γ replaces weight one-for-one. This is well inside the C3 margin over 21.24M [script]\n- The state_dict keys change (q_norm.weight → q_norm.gamma). The exam must build GPT from this file for the weights to load [belief]\n- Learned per-token temperature without clipping drifts and degrades performance (https://arxiv.org/pdf/2310.12956) [web]\n- Learnable QKNorm scale g gave an average +0.928 BLEU on 5 low-resource pairs (https://arxiv.org/pdf/2010.04245) [web]\n- NoPE with QK-Norm ends at higher loss than runs with ≥10% RoPE. Here rotary is 32/96 ≈ 33% of q/k dims (https://arxiv.org/abs/2603.11611) [web]\n- Watch per layer: τ_eff per head, mean(g_q⊙g_k), content and rotary max logits logged separately, entropy, and recall-token loss [belief]\n\nASSUMES:\n- The deep-layer max logit is driven by the content gains, not by the unnormalised rotary path.\n- AdamW decay on 1-D gains is strong enough, relative to the gradient signal, to cap attention sharpness.\n- Sharper deep attention lowers loss at 50M tokens, i.e. low entropy is useful and not noise or sink-like.\n- One temperature should scale content and rotary logits together.\n- The step-100 sharpness pattern (deep layers sharpest) persists to step 1525.\n- 1/√96 is the right unit scale, and the per-head deviation from it should be pulled back toward it by decay.\n- Per-dim gains shared across heads are worth keeping alongside a per-head scalar.\n- The exam's forward pass sees the same position distribution as training (1024 windows), so learned temperatures transfer.\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Normalised rotary path with its own per-head log-gain\nMECHANISM: Drop \"rotary path stays unnormalised\". RMS-normalise qr per head and kr before RoPE, and give the positional logit its own per-head exp(ρ_h) with ρ decayed to 0. Positional sharpness then becomes an explicit 6-scalar decision instead of a by-product of Muon-equilibrium weight norms.\nPREDICTION: Rotary-part max logits fall at first, then settle to the learned exp(ρ)·√32·√32/√96 envelope. Layer-to-layer spread in max logit shrinks. Loss is within ±0.01 at 300 steps, with lower spike count.\nTEST: 300-step matched run. Log rotary-only max logit per layer and loss_curve against baseline.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: leap\nBREAKS: Positional logits are unconstrained in magnitude (only content is QK-normed).\nKILL: 300-step loss above baseline by more than 0.02, or entropy in layers 7–11 above baseline by more than 0.05 at step 300.\n\nSLOT: strengthen\nIDEA: Split temperatures: content τc_h and rotary τr_h\nMECHANISM: Two clipped per-head log-temperatures, one multiplying qc and one multiplying qr (12 params per layer). The model can sharpen content matching and positional locality independently.\nPREDICTION: Deep layers raise τc while early layers raise τr. The recall-token loss falls more than with a single τ.\nTEST: 300-step run logging τc and τr per layer. The idea dies if τc ≈ τr everywhere, within 0.1.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: specialise\nIDEA: Temperature only in layers 6–11, only during cooldown\nMECHANISM: τ_h exists only in the six layers with entropy < 0.72. It is frozen at 0 until step 1067 and then trained, so sharpening happens while the lr decays and features are stable.\nPREDICTION: Same final gain as the full idea or better, with no early-training instability. Deep-layer entropy drops only after step 1067.\nTEST: Full-length single seed. Compare the loss_curve from step 1067 onward against baseline.\nSOURCE: https://arxiv.org/abs/2605.10504\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: port\nIDEA: Decay-proof log-gain on the final norm (logit temperature)\nMECHANISM: The final RMSNorm weight and the tied embedding are both decayed toward 0 by AdamW, which pulls output logits toward a uniform distribution. Reparametrise the final norm as exp(γ), plus one scalar log-temperature on the logits.\nPREDICTION: Lower loss on frequent tokens (rank 0–100, 3.163) early on. The final-norm RMS stays nearer 1.\nTEST: Dump the final norm weight RMS from the baseline model.pt. If it is ≥ 0.9, decay is not binding; then run a 300-step matched comparison.\nSOURCE: own\nPART: Output head / final norm\nKIND: port\n\nSLOT: combine\nIDEA: Per-head τ plus SSMax log-position scale\nMECHANISM: Multiply q at position t by exp(τ_h)·(1 + s_h·ln(t+1)/ln 1024), with s_h learned and initialised at 0. Later queries, which spread mass over more keys, can stay sharp. This addresses the measured +0.459-nat late-minus-early loss gap.\nPREDICTION: The 256–1024 position loss falls more than the 0–64 loss. Entropy at late positions drops.\nTEST: 300-step run reporting loss by position bucket against baseline.\nSOURCE: https://arxiv.org/pdf/2501.19399\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: other\nIDEA: Gainless cosine attention with only a per-head temperature\nMECHANISM: Delete the 128 per-dim gains entirely: unit-RMS q̂ and k̂, with all sharpness in a per-head exp(τ_h). This tests whether per-dim gains carry information or are only a temperature knob.\nPREDICTION: If the gains are only temperature, loss matches the full idea with 1,464 fewer parameters. If not, loss is worse by more than 0.01.\nTEST: 300-step matched run of three arms: baseline, the full idea, and gainless + τ.\nSOURCE: https://arxiv.org/pdf/2010.04245\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: leap\nBREAKS: QK-norm carries learnable per-dim gains.\nKILL: 300-step loss above the full idea by more than 0.015.\n\nOPEN:\n- What fraction of the deep-layer max logit comes from the rotary part vs the content part, at steps 100 and 1525? | build: yes | decides: τ on all of q vs only on qc (or split τc/τr)\n- What are the baseline full-run values of mean(g_q⊙g_k) per layer in model.pt? | build: yes | decides: include the exp(γ) reparam vs τ-only\n- Does the step-100 sharpness pattern hold at step 1525? | build: no | decides: τ in all layers vs only layers 6–11\n- Is the step-to-step seed noise of loss_curve at step 45 below 0.02, i.e. is the kill threshold meaningful? | build: no | decides: 45-step kill vs 300-step kill\n- Does the exam build GPT from this file so that renamed state_dict keys load? | build: yes | decides: rename the parameter to gamma vs keep the key name weight and store the log value\n- Does τ_max = 2 cause loss spikes once QK-norm's guard is relaxed? | build: yes | decides: upper clip 2 vs ln 3\n- Does the slope 2/3 of the sigmoid clip slow τ enough to hide the effect within 1525 steps? | build: yes | decides: sigmoid clip vs a rescaled clip with slope 1 at 0",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 13873,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 15857,
+  "total_tokens": 31300
+ },
+ "cost_usd": 1.340176,
+ "duration_ms": 139888,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 31300,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "attn_rope_norm-ou-k01",
+  "seed": "",
+  "note": "interrogating 'Decay-proof per-head log-temperature and exp-gains' gen 0 depth 0",
+  "node": "attn_rope_norm",
+  "depth": 0,
+  "gen": 0
+ },
+ "prompt_chars": 36067,
+ "raw": {
+  "duration_api_ms": 138470,
+  "stop_reason": "end_turn",
+  "session_id": "a956b892-aa58-4eb5-a52c-da1535edf596",
+  "total_cost_usd": 0.40463760000000004,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 15857,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 13873,
+   "output_tokens_details": {
+    "thinking_tokens": 7237
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 15857,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 13873,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 15857,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 15857
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 13873,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 15857,
+    "webSearchRequests": 0,
+    "costUSD": 0.40463760000000004,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 7237,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 138565,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 13873,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 15857,
+    "total_tokens": 31300
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 13873,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 15857,
+    "total_tokens": 31300
+   },
+   "source": "usage"
+  }
+ }
+}

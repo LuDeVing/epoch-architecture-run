@@ -1,0 +1,110 @@
+{
+ "call_id": "c6a387f95de",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "QUESTIONS, aimed at the weakest links first. Ask only questions whose answer would change how the idea is built, and say which two build choices each one decides:\n\nQ1: Can \"cosine of successive Muon updates above 0.5\" tell drift from noise at all, given momentum 0.95 with Nesterov? | decides: use successive-update cosine as the L2 diagnostic vs use a momentum-free statistic (raw-gradient or half-batch cosine)\nA1: No. For pure i.i.d. gradient noise, the Nesterov update u_t = 1.95·g_t + 0.9025·buf_{t−1} has a lag-1 autocorrelation of 9.70/12.16 ≈ 0.80. Pure noise therefore passes the 0.5 threshold easily, and the criterion cannot refute anything. NS5 rescales singular values but keeps the momentum-induced overlap in direction, so the post-NS cosine stays high. This is arithmetic; the post-NS value is a belief.\n\nQ2: Which statistic does separate signal from noise, and what null value does it have? | decides: log consecutive raw `p.grad` cosines vs split each step's 8 micro-batches into two halves and log the cosine between the half-gradients\nA2: Consecutive steps draw independent random windows, so the cosine of consecutive raw gradients (before momentum) has a null near 0 and a mean of about SNR²/(1+SNR²) under signal. The half-batch cosine (4 vs 4 micro-batches at the same step) estimates the same SNR without any parameter drift between the two samples, so it is the cleaner choice. Both need a diagnostic copy of the script; the candidate must not carry the hook. The actual SNR of the read gradient is unknown.\n\nQ3: How large is the read-logit excursion that a pure noise walk produces under Muon with weight decay 0.1? It sets the null for L2. | decides: keep the L2 threshold at 0.05 vs replace it with a noise-null threshold or a displacement-efficiency test\nA3: Belief, by arithmetic. The per-row Muon step is about lr·1, since NS5 singular values are about 0.5–1.5 and the shape scale is 1 for 2×4 (https://kellerjordan.github.io/posts/muon/). The decay rate is γ = lr·0.1, and the integrated autocorrelation of the momentum update is about 33 steps. The stationary noise-walk norm is then about √(0.02²·33/(2·0.002)) ≈ 1.8 logits per row, reached within about 1/γ = 500 steps. That gives max |softmax − 0.25| of about 0.15–0.25 over 22 live rows, so L2's \"> 0.05\" passes with no signal. A consistent drift would instead reach about ‖u‖/wd ≈ 10 logits, which is a near one-hot read.\n\nQ4: Does NS5 on the 2×4 gradient give a weak-signal row a full-size step? | decides: keep read_logits and write_logits as one 2×4 Muon matrix vs move them to AdamW or orthogonalise per row\nA4: Yes, unless the two rows are nearly parallel. NS5 amplifies a small normalised singular value by about 3.4445⁵ ≈ 485, so any second singular value above roughly 1.5e-3 of ‖G‖_F ends near 0.7–1.2. The row with the weaker gradient (attention-read vs MLP-read) therefore takes a step as large as the dominant row's, whatever its SNR. Block 0 row 0 is the exception: its gradient is exactly zero, because four identical streams and a softmax backward give w·(g − Σwg) = 0. NS5 maps a zero row to a zero row, so that row stays put.\n\nQ5: Over what window does a displacement test discriminate, and how expensive is it? | decides: settle the question in a 45–100-step smoke vs a run of at least 400 steps\nA5: By step 100 (Σlr = 1.71) a noise walk moves a row about √(100·0.0171²·33) ≈ 1.0 against a drift bound of 1.71. That is a ratio of about 0.57 vs 1.0, too close to call per row. Over a 400-step plateau window (path length 8), noise gives a net displacement of about 2.3 vs about 8 for drift, an efficiency of about 0.29 vs 1.0, which separates cleanly. A 45-step smoke cannot settle it; the half-batch cosine from A2 can, within about 50 steps, if SNR is not tiny. All figures are belief.\n\nQ6: Does the mix-logit init change the read-update direction or only its consequences? | decides: sweep the mix init with read and write logits on Muon as now vs fix the read/write optimiser first and sweep the mix init second\nA6: Muon's step size is independent of gradient magnitude (https://kellerjordan.github.io/posts/muon/), so lowering the mix init does not change how far the reads walk. It changes only the read SNR, through the stream spread, and that dependence is unknown. If reads are noise-dominated at every init, the sweep compares four noise walks, and L5's parity prior is the expected outcome whatever the mixing does.\n\nQ7: Is the stream spread that the reads see set by the 2% write init or by Muon noise on write_logits? | decides: interpret L3 as an exchange-vs-init effect vs an exchange-vs-write-noise effect (log write-gain spread alongside the stream spread)\nA7: Write logits share Q3's dynamics, so a noise walk with per-coordinate std of about 1 logit takes the gains 2σ(l) to roughly 0.5–1.5 across streams. That makes the 2% init asymmetry irrelevant after a few hundred steps. This is a belief and is unmeasured. It means the spread in L3 is mostly driven by write noise, and the reads are learning against a moving, noise-generated target.\n\nQ8: Does gradient clipping distort the read-direction measurement? | decides: log cosines on pre-clip `p.grad` vs on post-clip `p.grad`\nA8: No. `clip_grad_norm_` rescales all gradients by one scalar, so cosines are identical before and after clipping, and Muon's NS5 removes the scale anyway. Either point works; log after `backward` and before `o.step()`. The clip does change the magnitude of the AdamW-driven `mix_logits` updates, but not their direction.\n\nQ9: Does the Nesterov momentum buffer's own direction carry signal that the raw-gradient test would miss? | decides: compare successive `st[\"buf\"]` vs compare `buf` against an independent fresh half-batch gradient\nA9: The buffer averages about 20 gradients, so cos(buf_t, g'_t), with g'_t from an independent half batch, is about √(20)·SNR times larger than a single-gradient cosine at small SNR. It is a more sensitive test with the same null of 0. This is a belief. It costs one extra read of the optimiser state per logged step.\n\nKNOWN:\n- read_logits (2,4) and write_logits (2,4) are 2-D, so build_optimizers puts them on Muon at lr 0.02, wd 0.1, momentum 0.95, Nesterov; mix_logits (2,4,4) goes to AdamW at 3e-3 [script]\n- Muon's NS5 scale factor for a 2×4 matrix is max(1, 2/4)^0.5 = 1 [script]\n- Muon step size is independent of gradient magnitude; NS5 singular values are about 0.5–1.5, https://kellerjordan.github.io/posts/muon/ [web]\n- Successive Nesterov-momentum updates (β = 0.95) of pure i.i.d. noise have cosine of about 0.80, so the 0.5 criterion is passed by noise [belief]\n- Block 0 read row 0 has an exactly zero gradient (identical streams times the softmax backward), and NS5 keeps that row exactly zero [belief]\n- NS5's small-σ gain is 3.4445⁵ ≈ 485, so a second gradient direction above about 1.5e-3 of ‖G‖_F gets a full-size step [belief]\n- Noise-walk equilibrium for a Muon row with decay 0.1 is about 1.8 logits after about 500 steps, giving max |softmax − 0.25| ≈ 0.15–0.25; drift equilibrium is about 10 logits [belief]\n- At step 100 (Σlr 1.71) noise displacement is about 1.0 vs 1.71 for drift; at 400 plateau steps it is about 2.3 vs 8 [belief]\n- Gradient clipping is a global scalar and leaves gradient cosines unchanged [script]\n- Training windows are drawn independently each micro-batch (`rng.integers` per call), so consecutive raw gradients have independent noise [script]\n- accum = 32768 / (4·1024) = 8 micro-batches per step, which splits evenly 4/4 for the half-batch cosine [script]\n- The diagnostic hook (read `p.grad` before `o.step()`, read `opt.state[p][\"buf\"]`) belongs in a separate diagnostic copy; the candidate stays clean under C5/C6 [belief]\n- What to watch: half-batch cosine of read-logit gradients per stage, displacement efficiency ‖Σu‖/Σ‖u‖ over 400 steps, and write-gain spread per stage [belief]\n\nASSUMES:\n- Read and write logits belong on Muon with the matrix weights, not on AdamW with the other small parameters.\n- A 2×4 logit table is a meaningful matrix to orthogonalise jointly (attention-read and MLP-read rows coupled through NS5).\n- Read weights are soft, learnable and shared across tokens.\n- Stream differences come only from learned write gains and the mixing, not from a deliberate per-stream input.\n- The mixing must be doubly stochastic (Sinkhorn), so the stream mean is invariant.\n- Weight decay 0.1 applies to the read, write and mix logits, pulling them toward uniform or identity.\n- Successive-update cosine is an adequate proxy for \"the optimiser follows a signal\".\n\nNEW IDEAS:\nSLOT: drop\nIDEA: Stream logits on AdamW\nMECHANISM: Move read_logits and write_logits off Muon to the AdamW group, with no weight decay. Adam's m/√v step shrinks to about 0.2× for pure noise and stays near 1× for consistent signal, so a noise walk no longer reaches about 1.8 logits.\nPREDICTION: The read-logit norm stays below 0.5 per row unless the half-batch cosine is clearly positive; read and write spread no longer grows from noise; step time and parameters are unchanged.\nTEST: Run 300-step smokes of Muon vs AdamW routing and compare the read-row norm and the half-batch gradient cosine at steps 200–300.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: strengthen\nIDEA: One-scalar mixing temperature per stage\nMECHANISM: Parameterise the mixing as Sinkhorn(exp(τ_s·(I·6 + L_s))) with one learned scalar τ_s per stage on AdamW at lr 3e-3. The identity-to-uniform axis then becomes a single coordinate the optimiser can traverse within its roughly 3.8-logit reach, instead of 16 decayed logits.\nPREDICTION: τ settles at a stage-dependent value with consistent sign across seeds if exchange is useful, and decays toward 1 otherwise. It adds 24 parameters.\nTEST: Run 400-step smokes with 3 seeds and check whether τ_s per stage has the same sign of movement across seeds.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: specialise\nIDEA: Learnable reads only in the top half\nMECHANISM: Freeze reads to the uniform mean in blocks 0–5, where stream spread is smallest and the gradient is noise-dominated, and let reads learn only in blocks 6–11. This removes 12 noise walks while keeping any signal where spread has accumulated.\nPREDICTION: Exam loss is within ±0.003 of the all-learnable design if the bottom reads were noise, and the half-batch cosine of the remaining reads is unchanged.\nTEST: In a 300-step diagnostic, log the half-batch cosine per block. If blocks 0–5 show a mean below 0.02 and blocks 6–11 show a higher mean, build it.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: port\nIDEA: Small-matrix exclusion from Muon\nMECHANISM: Route every 2-D parameter with min(dim) < 16 to AdamW. NS5 orthogonalisation of tiny matrices gives full-size steps to rank directions with no signal (the 485× gain).\nPREDICTION: It is a no-op for the baseline (no tiny matrices there) and moves only the stream logits in this design. Over 400 steps, ‖Σu‖/Σ‖u‖ rises from about 0.3 toward 1 for these parameters.\nTEST: Make the one-line change in build_optimizers and check the displacement efficiency over 400 steps.\nSOURCE: https://kellerjordan.github.io/posts/muon/\nPART: Optimizer: Muon for 2-D weights, AdamW for the rest\nKIND: port\n\nSLOT: combine\nIDEA: Lookahead averaging on stream logits\nMECHANISM: Apply Lookahead (k = 40, α = 0.5) only to the read and write logits. The slow weights average out the momentum-correlated noise walk (about 33-step correlation) and keep any drift.\nPREDICTION: The slow-weight norm is about √(33/40) of the fast-weight noise norm under noise and equal to it under drift, which doubles as the drift/noise diagnostic at inference-free cost.\nTEST: Run a 400-step smoke and compare the fast vs slow read-logit norms.\nSOURCE: https://arxiv.org/abs/1907.08610\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: port\n\nSLOT: other\nIDEA: Hard one-hot reads, mixing as the only exchange\nMECHANISM: Remove read_logits. Attention at stage s reads stream (2·layer + 0) mod 4, the MLP reads (2·layer + 1) mod 4, and the output stays the mean. Streams become distinct paths, and the Sinkhorn matrix at init 2 is the only cross-stream route, so mixing must carry real information.\nPREDICTION: Stream spread rises by about 10× over the soft-read design and the mix logits move measurably away from init. Loss is either worse early or better late.\nTEST: Run a 200-step smoke against the init-6 soft-read run at matched steps.\nSOURCE: own\nPART: State across depth: four-stream Sinkhorn residual mixing\nKIND: leap\nBREAKS: Each branch reads a learned soft combination of all streams.\nKILL: Mean training loss over steps 90–110 more than 0.05 nats above the init-6 four-stream run over the same steps.\n\nOPEN:\n- What is the actual SNR (half-batch gradient cosine) of read-logit gradients per stage at steps 50–300? | build: yes | decides: reads on Muon vs on AdamW (or frozen)\n- Do write logits noise-walk to about ±0.5 gain spread, making write noise the main source of stream differences? | build: yes | decides: write logits on Muon vs AdamW without decay\n- Does the read SNR depend on the mix init (1, 2, 3, 6)? | build: yes | decides: run the mix-init sweep before vs after fixing read/write routing\n- Is the post-NS5 lag-1 cosine for pure noise really about 0.8, or does orthogonalisation of a 2×4 matrix lower it? | build: no | decides: report the Nesterov-buffer null analytically vs measure it with synthetic noise\n- Does the read noise walk itself cost loss (reading a noise-weighted mix of noisy streams)? | build: yes | decides: keep learnable reads vs uniform-mean reads\n- Do mix logits re-sharpen toward identity at init 2 (L1 breaks_if)? | build: yes | decides: init 2 vs init 3 for the full runs\n\nLINK STATUS:\n- L1: open | Step-0 masses are confirmed by arithmetic; end-of-run mass and re-sharpening are unmeasured. mix_logits are on AdamW, so Muon's noise walk does not affect them.\n- L2: open | Read weights will leave uniform (the noise walk alone gives |softmax − 0.25| of about 0.15–0.25), so the breaks_if condition cannot fire, and the successive-cosine test passes for noise (about 0.80). Whether the movement reflects signal, and hence whether mixing affects the loss, needs the half-batch cosine or a 400-step displacement test.\n- L3: open | Spread is likely set by the write-logit noise walk (gains of about 0.5–1.5), not by the 2% init. The test must log write-gain spread to attribute any ratio change to exchange.\n- L4: open | Column-sum invariance holds, but mean-stream RMS also moves with Σ write gains, which Muon noise-walks. The \"<3% change\" prediction is not implied by the mixing alone.\n- L5: open | No exam runs yet. If reads and writes are noise-dominated at every init, parity with init 6 is the expected outcome, consistent with https://arxiv.org/pdf/2604.02309",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 15064,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 13620,
+  "total_tokens": 30254
+ },
+ "cost_usd": 1.387557,
+ "duration_ms": 157679,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 30254,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "depth_stream_mix-in-k06",
+  "seed": "",
+  "note": "interrogating 'Lower mixing logit init (less identity)' gen 0 depth 2: Is the read update direction consistent across steps (cosine",
+  "node": "depth_stream_mix",
+  "depth": 2,
+  "gen": 0
+ },
+ "prompt_chars": 31311,
+ "raw": {
+  "duration_api_ms": 156262,
+  "stop_reason": "end_turn",
+  "session_id": "03f42651-37af-4297-94c3-7db67ea75f3e",
+  "total_cost_usd": 0.4105616,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 13620,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 15064,
+   "output_tokens_details": {
+    "thinking_tokens": 9021
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 13620,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 15064,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 13620,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 13620
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 15064,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 13620,
+    "webSearchRequests": 0,
+    "costUSD": 0.4105616,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 9021,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 156366,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 15064,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13620,
+    "total_tokens": 30254
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 15064,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 13620,
+    "total_tokens": 30254
+   },
+   "source": "usage"
+  }
+ }
+}

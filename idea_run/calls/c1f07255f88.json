@@ -1,0 +1,110 @@
+{
+ "call_id": "c1f07255f88",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "I'll produce the idea sketches now: a scratch seed list, the ranked rule list for the rulebreak operator, then seven sketches (four leaps, two tunes, one port), all aimed at the depth/stream part of nano/train.py.\n\nPASS 1 (scratch):\n1. Mixing starts as a cyclic permutation, not identity: the four streams become a delay line over the last four stages. (R5, kept, operator leap)\n2. Each stage writes one-hot into stream (2l+s) mod 4: streams become depth bands. (R6, kept as a tune)\n3. Blocks 4 to 9 run a second time with their own pass-specific stream logits. (R1, kept)\n4. Train 6 blocks for the first quarter, then stack-copy them into blocks 6 to 11. (R3, kept as a port)\n5. Last three blocks run attention and MLP in parallel from one read, each writing its own stream. (R2, kept)\n6. Branch writes are gated per token by a sigmoid of the normalized input. (R4, kept)\n7. Ten blocks of d_ff 1300 instead of twelve of 1077 at equal parameters. (R8, kept as a tune)\n8. The MLP of block l reads the state before block l's attention, a one-stage lookback. (R7, subsumed by 5)\n9. Top-half blocks run MLP first, then attention. (stage order)\n10. The middle four blocks are applied in a random order each step. (fixed order)\n11. Positions under 256 use eight blocks, later positions twelve. (same depth per position)\n12. Blocks 8 to 11 are dropped stochastically with rescale. (deterministic depth)\nFarthest from the brief and from each other: 1, 3 and 6. Seed 5 is the fourth leap.\n\nRulebreak operator, eight rules of this part, ranked by how much of the recipe depends on each:\n- R1. Every block is applied exactly once per forward pass, so depth and parameter count are tied.\n- R3. All twelve blocks are active from the first step to the last.\n- R2. Every block is one attention stage followed by one MLP stage.\n- R8. Depth is twelve and width is 384; the two are never traded.\n- R5. Stream k after a stage equals stream k before it plus the write, because mixing starts at identity.\n- R6. Every stage writes into all four streams with nearly equal weight, so the streams are exchangeable.\n- R7. A stage reads only the state at its own depth; earlier depths reach it only through the chain.\n- R4. A write weight depends on the layer, never on the token.\nDropped: R5. What must change: the initial mix_logits matrix becomes six times a cyclic permutation instead of six times the identity, and writes go into one slot. Everything else, including Sinkhorn, reads, head and optimizer, stays as it is.\n\nIDEA: Depth delay line (permutation mixing)\nMECHANISM: Initialize each stage's mixing logits at a cyclic shift instead of the identity and write the branch output only into the slot that the shift just vacated; stream j then holds the residual state exactly j stages back, so a layer's softmax read can form differences of consecutive states, which are the last three branch outputs individually, at zero added cost. This is a four-deep DenseFormer window built from parts the model already pays for, and the uniform read still equals the plain residual sum because each write lands in exactly one slot and is never lost.\nPREDICTION: Parameter count unchanged, step time unchanged within noise; train loss matches the baseline for the first 100 steps and pulls ahead by 0.02 to 0.04 nats by step 400 as the read weights move off uniform.\nTEST: A 45-step seed-matched smoke run against the baseline, then a 300-step run; also dump the learned read weights per stage at the end to confirm they left the uniform 0.25 (the baseline's should still sit near 0.25, which is the diagnostic that the baseline's streams never differentiate).\nSOURCE: own (builds past https://arxiv.org/abs/2402.02622)\nTARGET: gradient norm spread, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Stream k after a stage equals stream k before it plus the write; stream identity persists across depth.\nKEEPS: Twelve sequential blocks, the Sinkhorn parametrization, the read and write gates, the mean readout, the optimizer split.\nP_SUCCESS: 0.2\nKILL: Step-45 train loss more than 0.03 nats above the baseline's step-45 loss on the same seed.\n\nIDEA: Depth-band stream init\nMECHANISM: Change only the write-gate init so stage s of block l writes with weight near 1.9 into stream (2l+s) mod 4 and near 0.1 into the others; the four streams become sums over four interleaved depth bands instead of four near-identical copies. The baseline's 0.03 versus minus 0.01 start gives write weights of 1.015 versus 0.995, so its streams receive identical gradients and the whole four-stream apparatus, the Sinkhorn included, is a cost paid for nothing; breaking the symmetry at init is the cheapest way to make it earn its memory.\nPREDICTION: Parameter count and step time unchanged; per-stream RMS at the top of the stack drops to about half the baseline's; loss curve equal to the baseline through warmup and lower by 0.01 to 0.03 nats by step 500.\nTEST: Sweep the own-stream logit over 1, 2 and 3 and the off-stream logit over minus 3 and minus 1 at 45 matched steps, with the baseline as a sixth arm; discard any setting that is above the baseline at step 45.\nSOURCE: own\nTARGET: residual RMS growth, down\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Second pass over the middle blocks with pass-specific stream logits\nMECHANISM: Blocks 4 to 9 are applied twice, so the model spends 18 block applications per token on 12 blocks' weights, and the only new parameters are a second set of mix, read and write logits for the second pass, 56 per block. The stream logits act as the per-loop adapters of relaxed recursive transformers for free, and at 2.4 tokens per parameter the budget is data-limited, so more compute per token with the same weights should buy loss where more weights would not. The looped applications are wrapped in activation checkpointing to stay under 5.6 GB.\nPREDICTION: Non-embedding parameters up by 336; step time about 1.45 times the baseline, near 6.9 s; peak VRAM within 0.1 GB of the baseline because of the checkpointing; train loss slightly worse than the baseline until about step 100, then 0.03 to 0.06 nats better by step 500.\nTEST: A 3-step timing and peak-memory check first; then a 45-step matched smoke run, then 300 steps. A variant that loops blocks 8 to 11 instead distinguishes \"more depth helps\" from \"mid-stack refinement helps\".\nSOURCE: own (past https://arxiv.org/abs/2410.20672v2 and https://arxiv.org/abs/2507.10524)\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every block is applied exactly once per forward pass.\nKEEPS: Twelve unique blocks, their order, the stream machinery, the optimizer and schedule.\nP_SUCCESS: 0.15\nKILL: Step-45 train loss more than 0.05 nats above the baseline's, or peak VRAM above 5.6 GB in the 3-step check.\n\nIDEA: Progressive stacking from six to twelve blocks\nMECHANISM: For the first quarter of the steps only blocks 0 to 5 run; at the growth step the model copies each of them into block 6 to 11 and the loop switches to all twelve. The shallow phase learns the unigram and bigram structure at 0.7 times the step cost and a steeper per-token slope, and the copied stack starts from a trained function rather than a cold one, which the stacking literature reports as 1.5 to 2 times token efficiency.\nPREDICTION: Parameter count unchanged; first-phase steps about 0.7 times the baseline's time, full-phase unchanged; a loss bump of under 0.1 nats at the growth step that recovers within 50 steps, and a curve 0.02 to 0.04 nats below the baseline by the start of cooldown.\nTEST: Run with growth at step 100 for a 300-step budget and compare the matched-step curve; if the post-growth loss is still above the baseline at step 300 the idea dies. The growth step fraction is the one constant to sweep, over 0.15, 0.25 and 0.4.\nSOURCE: https://arxiv.org/abs/2405.15319\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Parallel tail with stream-separated writes\nMECHANISM: In the last three blocks attention and MLP read the same normalized state and run in parallel, and each writes into its own stream instead of into the same residual, so the two branches cannot cancel and the next stage's read can weight them separately. The redundancy profile of deep layers says late blocks are near-identity, so sequential ordering there buys little; the parallel layout also drops one Sinkhorn, one read and one combine per block, which lowers step time and activation memory.\nPREDICTION: Parameters unchanged; step time down about 4 percent and peak VRAM down about 0.15 GB; loss curve within 0.01 nats of the baseline at matched steps, with the win, if any, under 0.02 nats.\nTEST: A 45-step matched smoke run plus a 3-step memory check; a second arm applies the layout to the first three blocks instead, which the mechanism predicts should hurt.\nSOURCE: own (tests the open item from https://arxiv.org/html/2502.05795v3)\nTARGET: attention entropy in deep layers, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every block is one attention stage followed by one MLP stage.\nKEEPS: Block count, parameters, the stream mixing in the first nine blocks, the optimizer.\nP_SUCCESS: 0.1\nKILL: Step-45 train loss more than 0.02 nats above the baseline's.\n\nIDEA: Per-token write gates\nMECHANISM: Each stage multiplies its branch output by a sigmoid of a learned vector dotted with the normalized stage input, with a bias so the gate starts at 0.95; the gate vector is 1-D so it falls to AdamW. Easy tokens can then damp late-layer writes that add noise to a prediction already made, and the model's late-layer capacity concentrates on hard tokens without any routing, skipping or lost KV entries.\nPREDICTION: Parameters up by 9,240; step time unchanged within noise; the gate distribution bimodalizes by step 300, and loss on rare tokens falls more than loss overall.\nTEST: A 45-step matched smoke run; then log the mean gate per stage at step 300 and the per-token loss split by token frequency. If gates stay at 0.95 for every token by step 300 the mechanism is inert.\nSOURCE: own (pretraining version of the open item from https://arxiv.org/html/2510.13876v3)\nTARGET: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A write weight depends on the layer, never on the token.\nKEEPS: Twelve blocks each applied once, the stream mixing, the optimizer split.\nP_SUCCESS: 0.1\nKILL: Step-45 train loss more than 0.02 nats above the baseline's.\n\nIDEA: Ten blocks of width 1300\nMECHANISM: Set n_layer to 10 and d_ff to 1300, which keeps non-embedding parameters at 20.9M, below the baseline. At 50M tokens the model is far from converged, and in that regime fewer sequential stages optimize faster per token while the curse of depth says the last blocks contribute least; the Nemotron-Flash depth law was fitted at 100B tokens and does not cover this budget.\nPREDICTION: Parameters down 1.7 percent; step time down about 6 percent; train loss 0.01 to 0.03 nats below the baseline through the constant-LR phase, with the gap narrowing in cooldown.\nTEST: 45-step matched runs for 9 blocks at d_ff 1450, 10 at 1300, and the baseline, then a 300-step run of the best; a 14-block arm at d_ff 880 is the control that the direction, not the change itself, matters, and it needs a 3-step memory check first.\nSOURCE: own (tests the open item from https://arxiv.org/abs/2511.18890)\nTARGET: gradient norm spread, down\nSCOPE: validation loss at 1024\nKIND: tune\n\nRecap: seven sketches for the depth part. The two cheapest and most likely wins are the stream-symmetry fixes, since the baseline's write init leaves its four streams nearly identical and the mixing machinery unused. The four leaps are the permutation delay line, the mid-stack second pass with stream-logit adapters, the parallel tail with separated writes, and per-token write gates. Progressive stacking is a port, and the depth-for-width retrade is a tune. Every sketch has a 45-step matched kill test and a parameter and timing check that fits the 10 percent, 2x and 5.6 GB limits.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 18951,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20472,
+  "total_tokens": 42852
+ },
+ "cost_usd": 1.931035,
+ "duration_ms": 291794,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 42852,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "thread",
+  "note": "State across depth: layer count and block layout / inward / research",
+  "node": "depth_layer_stac",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 47345,
+ "raw": {
+  "duration_api_ms": 290369,
+  "stop_reason": "end_turn",
+  "session_id": "142a928b-805d-4cbd-be53-8237636bdfaa",
+  "total_cost_usd": 1.35786675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20472,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 18951,
+   "output_tokens_details": {
+    "thinking_tokens": 14389
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20472,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 18951,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20472,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20472
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 18951,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20472,
+    "webSearchRequests": 0,
+    "costUSD": 1.35786675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 14389,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 290520,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 18951,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20472,
+    "total_tokens": 42852
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 18951,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20472,
+    "total_tokens": 42852
+   },
+   "source": "usage"
+  }
+ }
+}

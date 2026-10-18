@@ -1,0 +1,105 @@
+{
+ "call_id": "cf304362af9",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"name\":\"Learned final stream read\",\"members\":[\"s4a0fc72a03\",\"s76b0cb73ef\",\"s807fb4c4e5\"]},\n{\"name\":\"Symmetry-breaking / distinct write inits\",\"members\":[\"s2eac9dcbe6\",\"s32eadedb69\",\"sfcab6002c5\",\"s140953b3d5\"]},\n{\"name\":\"Routed/bucketed writes to streams (depth groups, embedding stream)\",\"members\":[\"s3ce224f465\",\"s0942f451de\",\"sf876630c85\"]},\n{\"name\":\"Lower mixing init / temperature\",\"members\":[\"s5cf48e2bec\",\"s18fa64bbf5\",\"s8ef35c08d5\"]},\n{\"name\":\"Mass-conserving branch-as-stream residual\",\"members\":[\"sf7e0193cde\"]},\n{\"name\":\"Decay anchored at init\",\"members\":[\"s52abb696a5\"]},\n{\"name\":\"Per-stream RMS normalized read\",\"members\":[\"s18d2bfe530\"]},\n{\"name\":\"RMSNorm on embedding\",\"members\":[\"sdda6e64526\"]},\n{\"name\":\"Signed writes\",\"members\":[\"s6d20733947\"]},\n{\"name\":\"Causal running-mean stream\",\"members\":[\"s093ed44ef3\"]},\n{\"name\":\"RMS-proportional write gain\",\"members\":[\"s7ba4696f18\"]},\n{\"name\":\"Leapfrog split attention/MLP halves\",\"members\":[\"s5802a073df\"]},\n{\"name\":\"Mean-preserving orthogonal mix\",\"members\":[\"s2391ae38a8\"]},\n{\"name\":\"Sparse mixing stages\",\"members\":[\"sac31aaa55d\"]},\n{\"name\":\"Dynamic token-dependent read\",\"members\":[\"sca41315b3a\"]},\n{\"name\":\"Signed linear reads\",\"members\":[\"s998a036f1c\"]},\n{\"name\":\"Move stream logits to AdamW\",\"members\":[\"s400fda03d2\",\"s8c9a58e746\",\"sa69b5ebd6f\"]},\n{\"name\":\"Freeze/limit gate learning\",\"members\":[\"s7bff612812\",\"sd54a76871e\"]},\n{\"name\":\"Lookahead on stream logits\",\"members\":[\"s4af21a9761\"]},\n{\"name\":\"Hard one-hot reads\",\"members\":[\"s5ef3960e4b\"]}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 750,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 5763,
+  "total_tokens": 8083
+ },
+ "cost_usd": 0.033338,
+ "duration_ms": 7739,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 8083,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: depth_stream_mix/inward, 32 sketches"
+ },
+ "prompt_chars": 13854,
+ "raw": {
+  "duration_api_ms": 6318,
+  "stop_reason": "end_turn",
+  "session_id": "8e520119-71c3-4672-b510-35a2ef5ea74f",
+  "total_cost_usd": 0.0307128,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 5763,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 750,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 5763,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 750,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 5763,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 5763
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 750,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 5763,
+    "webSearchRequests": 0,
+    "costUSD": 0.0307128,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 6407,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 750,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 5763,
+    "total_tokens": 8083
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 750,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 5763,
+    "total_tokens": 8083
+   },
+   "source": "usage"
+  }
+ }
+}

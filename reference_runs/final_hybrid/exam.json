@@ -1,0 +1,9 @@
+{
+ "val_loss": 4.0212,
+ "val_bpb": 1.419,
+ "n_tokens": 2002944,
+ "seq_len": 1024,
+ "batches": 489,
+ "self_report": null,
+ "tokens_reported": 49971200
+}

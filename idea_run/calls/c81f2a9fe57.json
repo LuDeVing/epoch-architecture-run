@@ -1,0 +1,110 @@
+{
+ "call_id": "c81f2a9fe57",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "PASS 1 (scratch):\n1. Mixing init as a cyclic permutation so streams become a depth delay line (turns out identical to staggered writes with identity mixing, folded into the port below).\n2. Signed write gains (tanh) so streams hold sums and differences of attention and MLP outputs.\n3. Leapfrog split: attention reads the MLP half of the streams and writes the attention half, the MLP the reverse.\n4. The head reads a learned convex combination instead of the mean, and the embedding enters stream 0 only.\n5. Write gain init falling as 1/sqrt(depth), an explicit step-size schedule across depth.\n6. Angular step: the write gain scales with the RMS of the state being read, so every layer turns the state by the same angle.\n7. RMSNorm on the branch before the write (Gemma 4 post-norm), per-channel gain replacing the scalar.\n8. One mixing matrix shared by all 24 stages instead of 24 separate ones.\n9. Block pairs as a Heun predictor-corrector: the second block of a pair reads the first block's provisional state and corrects it.\n10. Birkhoff parameterisation: softmax over the 24 permutations of 4 streams instead of Sinkhorn.\n11. Stream dropout: zero the write to one random stream per batch as a regulariser.\n12. A stream that integrates along positions: stream 3 receives the causal running mean of the branch, not the branch.\n\nKept: 12, 2, 6 as the three farthest from the brief, the digest and each other, plus 3 to meet the quota of four leaps.\n\nIDEA: Staggered writes with staggered reads (from the layer-2 gradient dip)\nMECHANISM: Restated row: block 2's attention gradient norm sits 15% below the line through blocks 1 and 3, on all three seeds. Rival causes: (a) block 2's attention is partly redundant because blocks 1 and 2 read the same uniform stream mix one stage apart and the four streams are near-identical copies (writes go to all four streams with gain 1.0 and the Sinkhorn plan is 99.75% identity), so the two blocks compete for the same function; (b) block 2 is a positional layer whose attention logits have saturated early (max logit 13.5) and its gradient is small for real; (c) artifact: the per-layer norm sums five matrices of different sizes and is dominated by one of them, so a dip in a single matrix shows as a layer dip. The least popular rival is (a), and the change that follows from it is to make consecutive blocks read genuinely different states: stage j writes with gain 1.9 to stream j mod 4 and 0.05 to the others, and the read softmax of stage j starts with logit +1 on the stream written by stage j-1. Each stream then holds every fourth stage's outputs, and a block can learn to read \"the last stage only\", \"everything but the last stage\" or the average, which the current copies cannot express; this builds on the sequential-parallel init of Hyper-Connections.\nPREDICTION: Stream pairwise cosine drops from above 0.999 to below 0.9 by step 300; loss at 50M tokens 0.01 to 0.02 nats lower; parameter count unchanged; step time unchanged.\nTEST: Five-minute probe on the baseline checkpoint: zero the attention write gain of block 1, 2 and 3 in turn and measure the loss increase on 20 train batches; if block 2's increase is under half of its neighbours', rival (a) holds. Then a 45-step matched run; discard if the loss is more than 0.03 nats above the baseline's at step 45. Then 3 seeds at 50M.\nSOURCE: https://arxiv.org/abs/2409.19606\nTARGET: gradient norm spread (the block-2 attention cell should move onto the trend line); secondary: residual RMS growth, down since each stream receives 6 writes instead of 24\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: RMSNorm on the embedding before the stream expand (from the layer-0 gradient spike)\nMECHANISM: Restated row: block 0's attention receives a gradient norm ten times that of blocks 1 to 11, and block 0's MLP twice its neighbour, on all seeds. Rival causes: (a) block 0 does the most valuable work (near-uniform attention, entropy 0.957, computing a bag-of-words context) so the loss is most sensitive to it; (b) scale: the embedding enters block 0 with RMS near 0.02 while block 0's branch output has RMS near 1 (the measured residual RMS after block 0 is 1.40), so the residual after block 0 is block 0's output and the whole network plus the tied head differentiates through it; (c) artifact: the raw gradient norm is not the learning signal under Muon, which normalises every update (update-norm spread is only 2x), so the spike is a measurement of scale, not of importance, though it does set the global clip coefficient. The least popular rival is (b), and the change that follows is an RMSNorm with a learned gain, initialised to 1, applied to the token embedding before it is copied into the four streams, so block 0 adds to a state of unit RMS like every other block and the embedding is not drowned by the first write. Inkling places this norm after the lookup; here it also removes the dependence of the residual's starting scale on the AdamW dynamics of the tied embedding.\nPREDICTION: Block 0 attention gradient norm falls to within 2x of block 1; loss at 50M tokens 0.005 to 0.015 nats lower, with the larger share on rank 1000+ tokens whose embeddings are rarely updated and stay small; parameters +384; step time unchanged.\nTEST: Five-minute probe on the baseline checkpoint: compute the RMS of the embedding stream and of block 0's attention output on one batch, and the cosine between the residual after block 0 and that output; a ratio above 10 and a cosine above 0.9 confirm (b). Then a 45-step matched run; discard if loss at step 45 is more than 0.03 nats above baseline.\nSOURCE: https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html\nTARGET: gradient norm spread (the block-0 attention and MLP cells should fall onto the trend line); secondary: loss on rare tokens, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Reachable mixing: mix logit init 6 to 2\nMECHANISM: With logits at 6 the Sinkhorn plan is 99.75% identity, and under AdamW at 3e-3 over 1526 steps with decoupled decay the logits can move by at most about 4, so the plan stays at least 94% identity for the whole budget: the 20 Sinkhorn iterations per stage are paid for a matrix that is frozen at the identity by its own init. Starting at 2 (plan 70% identity, 10% per off-diagonal) puts the mixing inside the region the optimiser can shape within the budget; it only pays off when streams differ, so it is meant to be tested together with the staggered-write port above.\nPREDICTION: On its own: no change or a small loss (streams average towards one copy); with staggered writes: 0.003 to 0.008 nats lower at 50M tokens, with learned plans that move depth-j outputs between streams. No parameter or time change.\nTEST: Print the trace of each Sinkhorn plan at the end of a baseline 50M run (prediction: above 3.75 of 4 for all 24). Sweep init in {4, 3, 2} with staggered writes, 45 matched steps each, then 3 seeds at 50M for the best.\nSOURCE: own\nTARGET: validation loss only\nSCOPE: validation loss at 1024\nKIND: tune\n\nIDEA: Signed writes: streams hold sums and differences of attention and MLP outputs\nMECHANISM: Rerepresented as an ODE across depth, the state is x' = a(x) + m(x) and the four streams are four integrators of the same flow; the edit natural in that form is to integrate a and m with opposite signs on some streams, which the code forbids because its gains are 2·sigmoid. Replace the write gain with 2·tanh and initialise the attention stage to [+1, +1, +1, -1] and the MLP stage to [+1, +1, -1, +1], so stream 2 holds emb + A - M and stream 3 holds emb - A + M. A convex read of the four streams can then produce emb + αA + βM for any α, β in the hull, including the raw embedding (α=β=0), an MLP-free state for attention keys, or an attention-free state for the MLP, while the final mean is still emb + (A+M)/2, the baseline up to scale.\nPREDICTION: Learned read logits leave uniform within 200 steps (baseline reads have no gradient because the streams are copies); loss at 50M tokens 0.01 nats lower, mostly on rare tokens via the embedding-only read; parameters and time unchanged.\nTEST: 45 matched steps; then at a 300-step checkpoint check that at least one block's read vector lies off the (1,1) corner of the hull by more than 0.3. 3 seeds at 50M.\nSOURCE: own\nTARGET: loss on rare tokens, down; secondary: recall-token loss, down (attention reading an MLP-free state)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Write gains need not be non-negative; a stream may subtract a branch output.\nKEEPS: Four streams, static doubly-stochastic Sinkhorn mixing, token-independent softmax reads, mean at the head, same parameter count.\nP_SUCCESS: 0.12\nKILL: Loss at step 45 above 6.75 (matched baseline about 6.70), or any stream RMS exceeding 4x the others at step 45.\n\nIDEA: A stream that integrates along positions\nMECHANISM: Rerepresented as a PDE, the residual flows across depth but is frozen along the sequence except where attention moves it, and the measured layer 0 spends its attention computing a near-uniform context average (entropy 0.957). The edit natural in that form is a diffusion term along positions: stream 3 receives, instead of the branch, the causal running mean of the branch over positions (one float32 cumsum of B×T×384 per stage, divided by position count), so every block and the head see, at 1/4 weight through the mean read, a prefix summary that no attention head has to spend its budget on. Mixing across streams stays doubly stochastic and static; the running mean is row-stochastic along positions.\nPREDICTION: Late-position loss gap (currently +0.46 nats late minus early at step 100) shrinks by 0.1 or more; layer 0 attention entropy falls (the uniform head becomes unnecessary); loss at 50M tokens 0.01 to 0.02 nats lower; step time +1 to 2%; memory +40 MB.\nTEST: 3-step timing and peak-memory check first (0.1 GB headroom). Then 45 matched steps. Discard if the late-minus-early gap does not shrink by step 100.\nSOURCE: own\nTARGET: loss at late positions, down; attention entropy in layer 0, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: A stream's content at position t depends only on position t's own history of writes; here one stream is a prefix average.\nKEEPS: Attention, MLP, Sinkhorn mixing, reads, head and parameter count unchanged; the other three streams are the baseline's.\nP_SUCCESS: 0.15\nKILL: Loss at step 45 above 6.75, or step time above 5.2 s.\n\nIDEA: Angular step: write gain proportional to the RMS of the state read\nMECHANISM: In ODE form the measured linear RMS growth (1.4 to 10.9) means a constant step added to a state whose norm grows, so the angle each layer turns the state shrinks like 1/depth: layer 0 rotates it fully, layer 11 by a tenth, which matches the tenfold gradient decay across depth. The natural edit is a step size proportional to the state norm: the write gain becomes 2·sigmoid(w)·RMS(read state), detached, with w initialised so the factor is 0.15, so every stage adds the same relative amount and the state grows geometrically (about 28x) instead of linearly, giving late layers the same leverage as early ones.\nPREDICTION: Gradient norm spread across blocks 1 to 11 falls from 1.7x to under 1.3x; residual growth becomes geometric; loss at 50M tokens 0.005 to 0.01 nats lower or, if early-layer contributions get drowned, higher; no parameter or time change.\nTEST: 45 matched steps with factor 0.15, then a sweep over {0.1, 0.25} if the first is within 0.02 of baseline. Check bf16 sanity by comparing the loss of the checkpoint evaluated in float32 against bf16 (difference above 0.01 nats means drowning).\nSOURCE: own\nTARGET: gradient norm spread, down; residual RMS growth (shape changes from linear to geometric)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: The step added by each layer has a scale independent of depth; here the scale is a fixed fraction of the state.\nKEEPS: Pre-norm reads, the same branches, Sinkhorn mixing, positive gains per stream.\nP_SUCCESS: 0.08\nKILL: Loss at step 45 above 6.75, or the float32-versus-bf16 evaluation gap above 0.01 nats.\n\nIDEA: Leapfrog split of the four streams\nMECHANISM: Rerepresented as a Hamiltonian system, streams 0-1 are the position q and streams 2-3 the momentum p; attention reads p and writes q, the MLP reads q and writes p (read logits init +3 on its half, write gains 1.9 on its half and 0.05 on the other). Each branch then sees the embedding plus the accumulated outputs of the other kind only, each half receives 12 writes instead of 24, and the two halves stay bounded separately; the softmax reads and the Sinkhorn leak let the model reopen a direct attention-to-attention path if it needs it for induction.\nPREDICTION: Residual RMS growth halves; recall-token loss worsens at first (induction composition is indirect) and must recover by step 300; loss at 50M tokens 0.005 nats lower or worse; parameters and time unchanged.\nTEST: 45 matched steps; then at step 300 compare recall-token loss to baseline, which decides the induction question directly.\nSOURCE: own\nTARGET: residual RMS growth, down; recall-token loss (must not rise by more than 0.05 at matched steps)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: Every branch reads and writes the same averaged state; here attention and MLP each read the other's accumulated outputs.\nKEEPS: Four streams, static doubly-stochastic mixing, token-independent reads, mean at the head, same parameter count.\nP_SUCCESS: 0.06\nKILL: Loss at step 45 above 6.78, or recall-token loss above baseline by more than 0.1 nats at step 100.",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 27354,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 19091,
+  "total_tokens": 49874
+ },
+ "cost_usd": 2.575655,
+ "duration_ms": 419845,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 49874,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:diagnosis",
+  "operator": "inward",
+  "seed": "",
+  "note": "State across depth: four-stream Sinkhorn residual mixing / inward / diagnosis",
+  "node": "depth_stream_mix",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 42711,
+ "raw": {
+  "duration_api_ms": 418435,
+  "stop_reason": "end_turn",
+  "session_id": "4bc58441-91ba-4c2e-a34e-5d1efdb4d109",
+  "total_cost_usd": 1.75039675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 19091,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 27354,
+   "output_tokens_details": {
+    "thinking_tokens": 22211
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 19091,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 27354,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 19091,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 19091
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 27354,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 19091,
+    "webSearchRequests": 0,
+    "costUSD": 1.75039675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 22211,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 418535,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 27354,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19091,
+    "total_tokens": 49874
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 27354,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 19091,
+    "total_tokens": 49874
+   },
+   "source": "usage"
+  }
+ }
+}

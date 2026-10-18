@@ -1,0 +1,105 @@
+{
+ "call_id": "c6db9dc05dc",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "[\n{\"name\":\"QK-norm / init scale for rotary slices\",\"members\":[\"s0f6c1feaa2\",\"se6e14f1347\",\"s7faf5a9d8d\"]},\n{\"name\":\"Value rotation with derotation (offset-coded values)\",\"members\":[\"s14e8dccd43\",\"sdce62f76f0\",\"sce278c5f21\",\"sf2547da1ce\",\"sbe9e85c46f\",\"sd480bde265\",\"seb90bfb8b7\",\"s8970d9397d\",\"s8872208160\",\"seb90537ed1\"]},\n{\"name\":\"Explicit expected-offset scalar channel\",\"members\":[\"sd643cb4d15\",\"se4e4821673\"]},\n{\"name\":\"Previous-token info injection (smear/shift/hardwired head)\",\"members\":[\"seba836bc5b\",\"sfebce4350b\",\"sa6357ca69a\"]},\n{\"name\":\"Fourier relative-position bias / query-steered lag\",\"members\":[\"s9372ec69ee\",\"s233311b8c4\"]},\n{\"name\":\"Key-side magnitude/salience restoration\",\"members\":[\"s5f4de9d096\",\"sed9c6ae909\"]},\n{\"name\":\"Attention-window/chunk warmup\",\"members\":[\"sc7e8d0e25f\"]},\n{\"name\":\"Exclude self-key in deep layers\",\"members\":[\"s9dc3b4a3ac\"]},\n{\"name\":\"Causal key depletion\",\"members\":[\"s8cdd20763f\"]},\n{\"name\":\"Event-time clock for slow rotary band\",\"members\":[\"sbb6477ac20\"]},\n{\"name\":\"Post-attention sigmoid head gate\",\"members\":[\"s20fc36fd74\"]},\n{\"name\":\"Float32 rotary application\",\"members\":[\"s34f2387e58\"]},\n{\"name\":\"Faster LR for positional projections\",\"members\":[\"sd943885864\"]}\n]",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 588,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 5432,
+  "total_tokens": 7590
+ },
+ "cost_usd": 0.029666,
+ "duration_ms": 6504,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 7590,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_rope_norm/inward, 29 sketches"
+ },
+ "prompt_chars": 13328,
+ "raw": {
+  "duration_api_ms": 4921,
+  "stop_reason": "end_turn",
+  "session_id": "ed93ced2-2040-4315-959b-330063ef0c08",
+  "total_cost_usd": 0.0277688,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 5432,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 588,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 5432,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 588,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 5432,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 5432
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 588,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 5432,
+    "webSearchRequests": 0,
+    "costUSD": 0.0277688,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 0,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 5001,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 588,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 5432,
+    "total_tokens": 7590
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 588,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 5432,
+    "total_tokens": 7590
+   },
+   "source": "usage"
+  }
+ }
+}

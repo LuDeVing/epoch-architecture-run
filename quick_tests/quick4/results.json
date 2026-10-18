@@ -1,0 +1,38 @@
+{
+ "r4_value_residual": {
+  "steps": 300,
+  "last50": 5.1011,
+  "at100": 6.0612,
+  "step_s": 2.6,
+  "params_nonembed": 21242316,
+  "vram": 3.13,
+  "error": null
+ },
+ "r4_softcap": {
+  "steps": 300,
+  "last50": 5.1351,
+  "at100": 6.0926,
+  "step_s": 2.81,
+  "params_nonembed": 21242304,
+  "vram": 3.33,
+  "error": null
+ },
+ "r4_sink": {
+  "steps": 300,
+  "last50": 5.1679,
+  "at100": 6.1169,
+  "step_s": 2.73,
+  "params_nonembed": 21249216,
+  "vram": 3.14,
+  "error": null
+ },
+ "r4_final_read": {
+  "steps": 300,
+  "last50": 5.1525,
+  "at100": 6.1003,
+  "step_s": 2.6,
+  "params_nonembed": 21242308,
+  "vram": 3.13,
+  "error": null
+ }
+}

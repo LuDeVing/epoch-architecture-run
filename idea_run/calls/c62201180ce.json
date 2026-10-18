@@ -1,0 +1,110 @@
+{
+ "call_id": "c62201180ce",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "fable",
+ "text": "PASS 1 (scratch):\n1. Rule: the head reads the uniform mean of the four streams. Flip: a learned signed output read, because 1ᵀM = 1ᵀ makes the mean blind to every mixing matrix.\n2. Rule: a write adds mass to the residual. Flip: the branch is a fifth stream in a 5×5 doubly-stochastic transport, so the residual averages instead of accumulating.\n3. Rule: weight decay pulls logits toward zero. Flip: parameterize logits as init + delta so decay pulls toward the identity/asymmetric init instead of toward uniform mixing (total collapse).\n4. Rule: every stage writes into all four streams. Flip: stream k is written only by depth-quarter k at init, so streams become depth buckets and reads become a static Attention-Residuals over four buckets.\n5. Rule: reads mix raw streams. Flip: divide each stream by its own RMS before the convex read, so softmax weights are selectors rather than being dominated by the loudest stream.\n6. Rule: each stage has its own 4×4 mix. Flip: one shared mix per stage type across all 12 blocks (24 matrices → 2).\n7. Rule: the branch output is written as the same vector to every stream. Flip: attention head-groups write to different streams.\n8. Rule: the input is four identical copies. Flip: sign-flipped or permuted copies (touches a fixed assumption; listed, not kept).\n9. Rule: mix after write. Flip: mix before read so the write lands on unmixed streams and the read sees the mixed state.\n10. Rule: stream roles identical for all tokens. Flip: even/odd positions use transposed roles (violates the fixed token-independence; not kept).\n11. Rule: one read feeds the whole branch. Flip: separate reads for queries and keys/values (MUDD multiway; needs Attention changes, out of scope).\n12. Rule: norm then head on the mean. Flip: the tied head scores each stream separately and the four logit sets are averaged (stream ensemble).\nKept in full: 1, 2, 4, 3, and 5 as a near-free fifth (the quota needs four leaps).\n\nIDEA: Mixing-blind output read\nMECHANISM: For any doubly-stochastic M, 1ᵀM = 1ᵀ, so the stream-sum evolves as a plain single residual stream and the final mean read is invariant to every learned mixing matrix; whatever the 3-dim stream-difference subspace learns is only ever used by in-block reads, never by the head. Replace the final mean with a learned 4-vector read, initialized one-hot on stream 0 (identical to the mean at init since the streams start as copies), with signs free, so the composed transport plan of all 24 mixing stages now determines what the head sees and the mixing logits receive a direct output gradient.\nPREDICTION: Loss curve equal at step 1, diverging downward after the streams separate (step 100 onward); +4 parameters; step time unchanged; the final 4×384 stream state is saved once for backward (13 MB).\nTEST: 3-step timing and a 45-step matched smoke run against the baseline curve; print the learned read vector and the per-stream RMS at the end to confirm it moved off one-hot.\nSOURCE: own\nTARGET: residual RMS growth (the signed read can subtract the dominant stream) and validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: the head reads the uniform mean of the streams, which is provably independent of all mixing matrices.\nKEEPS: four streams, static doubly-stochastic 4×4 Sinkhorn mixes, softmax reads, sigmoid writes, final RMSNorm, tied head.\nP_SUCCESS: 0.15\nKILL: mean train loss over steps 41-45 more than 0.03 above the baseline's at the same steps.\n\nIDEA: Mass-conserving residual (branch as fifth stream)\nMECHANISM: The brief says Sinkhorn mixing \"bounds residual growth\" yet RMS grows 7.8x; literalized, mixing is a mass-conserving transport, so all growth comes from the writes, which are outside the constraint. Make the branch output a fifth input stream and apply one 5×5 Sinkhorn matrix per stage to [x₁..x₄, branch], keeping the first four rows: each new stream is a convex combination of old streams and the branch, so the residual is an exponential moving average rather than a sum, RMS is bounded by the largest branch norm, and every block's output reaches the head with a comparable weight instead of the early blocks being drowned by late ones.\nPREDICTION: Residual RMS growth drops from 7.8x to near 1x; parameter count +10 per block (2×25 logits replace 2×16 plus 8 write logits), +120 total; step time within 1% (same Sinkhorn loop on a 5×5); initial loss curve slightly slower for the first 20 steps if the branch column is initialized to a running-mean weight 1/(stage+2), then matching or beating baseline.\nTEST: Parameter count by --build-only, a 3-step timing, then a 45-step matched smoke run; log the stream RMS at the last block to confirm it is bounded.\nSOURCE: own, literalizing https://arxiv.org/abs/2512.24880\nTARGET: residual RMS growth, down; gradient norm spread across depth, down\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: a write adds the branch to the residual with a gain near 1, so the residual norm accumulates with depth.\nKEEPS: four streams, static doubly-stochastic Sinkhorn mixing (now 5×5), token-independent softmax reads, 20 iterations, mean output read.\nP_SUCCESS: 0.1\nKILL: mean train loss over steps 41-45 more than 0.08 above the baseline's, or step-45 loss not below step-20 loss.\n\nIDEA: Streams as depth buckets with an embedding reservoir\nMECHANISM: Literalize the brief's \"four-stream residual ≈ embedding/U-net skips\": a stream that no block writes to is exactly a clean embedding skip available to every read, and a stream written only by one depth-quarter is exactly one bucket of Kimi's Attention Residuals. Initialize the write logits so stream 0 receives no writes (logit about -6, gain near 0.005) and streams 1-3 receive writes from blocks 0-3, 4-7 and 8-11 respectively with gain 1 (others near 0), keep the identity Sinkhorn init; the read softmax at every block can then pull the raw embedding, the early-depth sum or the late-depth sum separately, which gives a static four-bucket Attention Residual at zero extra parameters, and the stream-difference subspace is large from step 1 instead of 2% of the branch norm.\nPREDICTION: Zero parameter change, zero step-time change; read weights move off uniform within 100 steps; loss curve below baseline from the mid-run onward; the output mean becomes (embedding + 3 depth-bucket sums)/4, so the final norm scale shifts but is learned.\nTEST: 45-step matched smoke run; dump the softmax read weights per block to confirm late blocks read the early and embedding buckets with non-uniform weight.\nSOURCE: own, building on https://arxiv.org/pdf/2603.15031.pdf and https://github.com/kellerjordan/modded-nanogpt\nTARGET: loss on rare tokens, down (clean embedding reachable at depth); residual RMS growth, down (writes spread over three streams)\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: every stage writes its branch into all four streams with gains near 1.\nKEEPS: four streams, static doubly-stochastic mixing with 20 Sinkhorn iterations, softmax reads, sigmoid writes (only the init moves), mean output read.\nP_SUCCESS: 0.18\nKILL: mean train loss over steps 41-45 more than 0.03 above the baseline's.\n\nIDEA: Decay anchored at the init, not at uniform mixing\nMECHANISM: Sinkhorn on exp(L) is invariant to L shifted by row and column constants, and AdamW's decay shrinks L toward zero, which is the uniform 1/4 matrix: the optimizer regularizes every mixing stage toward full stream collapse, and shrinks write and read logits toward perfect symmetry, undoing the deliberate asymmetric init. Reparameterize each logit tensor as a fixed buffer holding the init plus a learned zero-initialized delta, so decay pulls toward the identity mix and asymmetric writes instead of toward uniform; the optimizer code is untouched.\nPREDICTION: Identical loss at step 1; mixing diagonal stays at 0.99 instead of drifting toward 0.9 by mid-run; same parameter count and step time; a small late-run gain as streams keep their separation under cooldown.\nTEST: Print the Sinkhorn diagonal of block 6 at step 45 for baseline and candidate (the baseline's should already have dropped by lr×wd×45 = 4%); then a 45-step matched smoke run and a full 3-seed run, since the effect is cumulative.\nSOURCE: own\nTARGET: residual RMS growth, down (less uniform mixing of a dominant stream); validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: the regularizer's zero point is the origin of the logit parameterization, which under Sinkhorn is uniform mixing.\nKEEPS: everything about the forward computation, the optimizer and its hyperparameters.\nP_SUCCESS: 0.12\nKILL: Sinkhorn diagonal of the candidate differs from the baseline's by less than 0.005 at step 45 (then decay was never the drift mechanism), or train loss over steps 41-45 is more than 0.02 above baseline.\n\nIDEA: Per-stream RMS before the convex read\nMECHANISM: A softmax read is a selector only if streams have equal norm; with RMS growth concentrated in the written stream, the read is dominated by the loudest stream regardless of the weights, so read logits get almost no useful gradient. Divide each stream by its own RMS (a (B,T,4,1) tensor, cheap to save) inside the read, fold w_i/rms_i into one weight tensor and keep n1/n2 afterwards unchanged, so the read weights become a real per-stream selection.\nPREDICTION: Zero parameters added; under 1% step time; memory +0.4 MB per stage; read weights depart from uniform earlier and further; loss curve slightly below baseline after the first few hundred steps.\nTEST: 3-step timing and peak-VRAM check (must stay under 5.6 GB), then a 45-step matched smoke run; log read weight entropy per block.\nSOURCE: own\nTARGET: gradient norm spread across depth, down; validation loss only\nSCOPE: validation loss at 1024\nKIND: leap\nBREAKS: the read is a convex combination of raw, unnormalized streams.\nKEEPS: four streams, static Sinkhorn mixing, token-independent softmax read weights, sigmoid writes, pre-branch RMSNorm.\nP_SUCCESS: 0.1\nKILL: mean train loss over steps 41-45 more than 0.02 above the baseline's, or peak VRAM above 5.6 GB.\n\nIDEA: One-hot symmetry-breaking write init\nMECHANISM: The current write init gives gains of 1.015 versus 0.995 across streams, which is symmetric to within 2%, so the streams remain near-copies and the mixing has nothing to mix; Hyper-Connections initialize each stage's write to a single stream, and the stream-collapse paper shows symmetry-breaking init reduces one-stream dominance. Initialize write logits so stage s of block ℓ writes with gain 1 to stream (2ℓ+s) mod 4 and gain about 0.02 to the others (logit -4.6).\nPREDICTION: No parameter or time change; per-stream RMS becomes balanced (four streams of similar norm instead of one dominant); loss curve matches baseline early and ends 0.005 to 0.01 lower.\nTEST: 45-step matched smoke run plus the stream RMS printout; the full 3-seed run decides.\nSOURCE: https://arxiv.org/pdf/2409.19606 and https://arxiv.org/pdf/2606.03483\nTARGET: residual RMS growth, down\nSCOPE: validation loss at 1024\nKIND: port\n\nIDEA: Mixing temperature sweep\nMECHANISM: The 6.0 identity init gives off-diagonal entries of 0.0025 after Sinkhorn, so cross-stream exchange is effectively zero and the sHC finding that mHC matrices sit at identity holds from step 0 by construction; a lower init lets each stage diffuse a controlled fraction of each stream into the others, which is the only route by which stream differences created by the writes reach other reads.\nPREDICTION: Lower init raises the fraction of a write visible in other streams after one stage from 0.75% to 10-30%; the loss curve changes little in the first 100 steps and improves late if any exchange is useful; no parameter or time change.\nTEST: Sweep mix_logits init over {1.0, 2.0, 3.0, 6.0} in 45-step smoke runs, then the two best at full length over 3 seeds.\nSOURCE: own, motivated by https://arxiv.org/pdf/2603.20896\nTARGET: residual RMS growth, down (diffusion spreads the dominant stream); validation loss only\nSCOPE: validation loss at 1024\nKIND: tune",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 15160,
+  "cache_read_input_tokens": 3427,
+  "cache_creation_input_tokens": 20121,
+  "total_tokens": 38710
+ },
+ "cost_usd": 1.620735,
+ "duration_ms": 231663,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 3300,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 38710,
+ "over_cap": true,
+ "meta": {
+  "card": "sketch:research",
+  "operator": "inward",
+  "seed": "badge",
+  "note": "State across depth: four-stream Sinkhorn residual mixing / inward / research",
+  "node": "depth_stream_mix",
+  "web": false,
+  "family": "fable"
+ },
+ "prompt_chars": 46140,
+ "raw": {
+  "duration_api_ms": 229817,
+  "stop_reason": "end_turn",
+  "session_id": "fc0ce76d-07c0-4780-a92d-ff9716d98746",
+  "total_cost_usd": 1.16129675,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 20121,
+   "cache_read_input_tokens": 3427,
+   "output_tokens": 15160,
+   "output_tokens_details": {
+    "thinking_tokens": 10499
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 20121,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 15160,
+     "cache_read_input_tokens": 3427,
+     "cache_creation_input_tokens": 20121,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 20121
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-fable-5-1": {
+    "inputTokens": 2,
+    "outputTokens": 15160,
+    "cacheReadInputTokens": 3427,
+    "cacheCreationInputTokens": 20121,
+    "webSearchRequests": 0,
+    "costUSD": 1.16129675,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 64000,
+    "thinkingTokens": 10499,
+    "canonicalModel": "claude-fable-5-1",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 230028,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 15160,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20121,
+    "total_tokens": 38710
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 15160,
+    "cache_read_input_tokens": 3427,
+    "cache_creation_input_tokens": 20121,
+    "total_tokens": 38710
+   },
+   "source": "usage"
+  }
+ }
+}

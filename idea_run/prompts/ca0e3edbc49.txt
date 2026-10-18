@@ -1,0 +1,592 @@
+# Problem: lower the validation loss of the nano language model at a fixed budget
+
+GOAL: change nano/train.py so that, trained for exactly 50M tokens on the same data,
+its validation loss is lower than the baseline's. Any part of the model, optimizer,
+schedule or data order may change within the constraints.
+
+PURPOSE: Improve the strongest open architecture at this size: this recipe is the dense skeleton of DeepSeek-V4 and Kimi K3 scaled to 21M parameters (latent attention, QK-norm, four-stream residual mixing), the best model we measured. The goal is invention, not porting: the known tricks of 2026 are already in this skeleton or in the digest, so an idea that merely copies one counts for little. Think like a researcher who understands why each part exists and asks what it still gets wrong: find a mechanism this architecture lacks, a cost it pays for nothing, an assumption its designers inherited without testing, an interaction between two parts nobody has exploited. Be precise, cheap to test, and say why the idea would hold at large scale.
+
+SCOPE OF THIS RUN: only these parts may change; the rest of the recipe (optimization, data, the whole recipe (cross-part changes), objective) stays exactly as it is:
+- inputs and outputs: GPT.tok, GPT.head, GPT.forward loss, Config.vocab_size, tie_embeddings
+- sequence mixing (attention): Attention, rope_cache, apply_rope, Config.n_head, n_kv_head, sliding_window
+- per-token computation: MLP, Config.d_ff
+- state across depth: Block, GPT.blocks, RMSNorm, GPT._init, Config.n_layer
+
+BASELINE (measured): non-embedding params 21,242,304; step time 4.77s; smoke drop None -> None in None steps.
+
+HARD CONSTRAINTS:
+C5. The file keeps the same command-line interface and still writes metrics.json with val_loss; --build-only, --smoke-steps and --smoke-seconds must keep working.
+C3. Non-embedding parameter count at most 10 percent above the baseline (21.24M); fewer parameters are always allowed.
+C2. Same token budget: --tokens 50e6. The exam is run by the harness on the weights the script saves (model.pt): 2M validation tokens in fixed 1024-token windows, plain next-token cross entropy from GPT(cfg).forward(idx) logits. The script never sees val.bin; evaluate() stays as it is and is only a self-report.
+C6. No dependencies beyond torch, numpy and the plain standard library; socket, urllib, http, subprocess, ctypes, multiprocessing, importlib, pickle and shutil are denied; no network; no subprocesses; no reference to the validation split anywhere in training code. The process runs under a tripwire that fails the candidate on any of these.
+C7. The metric is the exam's validation loss after the fixed budget; a change counts only if it beats the pooled baseline mean by more than 0.005 nats with a one-sided Welch test at p < 0.01 over at least 3 seeds.
+C1. Same data: the FineWeb-Edu shards in D:/AGI-lab/data/fineweb, loaded through the Shards class as in the baseline.
+C4. Peak VRAM under 5.6 GB and step time at most 2x the baseline on an RTX 4050 (6 GB).
+
+COST AND HEADROOM (computed from the script and today's measurements):
+- parameters: 21,975,936 non-embedding (attention projections 7,077,888, feed-forward 14,888,448, norms 9,600); embeddings 19,316,736 tied; one block is 1,831,296 (attention 589,824, feed-forward 1,240,704); measured 21,242,304
+- forward compute per token: attention projections 15%, attention scores and values 10%, feed-forward 32%, output head 42% (shape 12 layers x 384 wide, 6 heads of 64, feed-forward 1077, context 1024)
+- headroom in parameters: +2,124,230 (10% of the original) before the cap: about 1.16 of a block, or widening the feed-forward by 1,843, or 7 more full-width projections per layer; shrinking is always allowed
+- headroom in time: the step takes 4.77s today and may take up to 9.53s (2x); a change that costs more than that fails the timing check
+- headroom in memory: 5.50 GB used of the card's 6 GB; about 0.1 GB free after a safety margin
+- the exam: validation loss at a fixed budget of tokens; a win is at least 0.005 nats below the original over three seeds, a stackable gain at least 0.002
+
+CURRENT SCRIPT (modify this):
+```python
+# IDEA: strongest open model, dense skeleton scaled to 21M
+# BASED ON: DeepSeek-V4 config https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/raw/main/config.json; Kimi-K3 config https://huggingface.co/moonshotai/Kimi-K3/raw/main/config.json
+# EXCLUDED: MoE, sparse/compressed long-context attention, prediction extras and vision: size/context constraints; Kimi KDA and attention residuals: follow DeepSeek
+# FIDELITY: partial, user-specified MLA substitutes V4 token compression; d=384, layers=12, heads=6, content=64, latent=128, rotary=32, context=1024, FFN=1077, tied head; static 4-stream Sinkhorn mixing substitutes dynamic mHC; QK RMSNorm, asymmetric stream write start and baseline residual initialization are local choices; theta=10000, epsilon=1e-6, stream count=4 and Sinkhorn=20 sourced from V4 config
+"""nano trainer: a small, readable language-model training script that the HTSA loop proposes
+changes against. Fixed token budget, fixed data, fixed evaluation; everything else is fair game.
+
+Baseline architecture (research_notes/architectures/nano_specs.md, section A, "nano-GPT2"):
+pre-norm Transformer, RMSNorm, rotary positions, SwiGLU MLP, no biases, tied embeddings,
+d=384, 12 layers, 6 heads x 64. Optimizer: Muon for 2-D weights, AdamW for the rest.
+
+Modes (the verifier in nano/check.py uses them as rungs):
+  --build-only            construct the model, print parameter counts, exit
+  --smoke-steps N         run N optimizer steps on real data, report step time and peak memory
+  --smoke-seconds S       train for S seconds, report whether loss fell
+  (default)               train for --tokens tokens, evaluate, write metrics.json
+
+Outputs metrics.json in --out: {val_loss, val_bpb, params_total, params_nonembed, tokens,
+steps, wall_s, peak_vram_gb, loss_first, loss_last, loss_curve, arch, seed} and, after a full run,
+model.pt (weights + config) for the harness's own exam (nano/exam.py). The data folder comes from
+HTSA_DATA_DIR; under the harness it holds the train shards only, so val_loss is None there.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import time
+from dataclasses import dataclass, asdict
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+DATA_DIR = Path(os.environ.get("HTSA_DATA_DIR") or (Path(os.environ.get("HTSA_LAB_ROOT", r"D:\AGI-lab")) / "data" / "fineweb"))
+
+
+# ======================================================================================
+# Config
+# ======================================================================================
+@dataclass
+class Config:
+    arch: str = "gpt2"
+    vocab_size: int = 50304          # GPT-2 BPE (50257) padded to a multiple of 64
+    n_layer: int = 12
+    n_head: int = 6
+    n_kv_head: int = 6               # = n_head for MHA; fewer for GQA
+    d_model: int = 384
+    d_ff: int = 1077                 # SwiGLU hidden size
+    seq_len: int = 1024
+    tie_embeddings: bool = True
+    rope_theta: float = 10000.0
+    sliding_window: int = 0          # 0 = full causal attention
+    # training
+    tokens: float = 50e6
+    batch_tokens: int = 32768        # tokens per optimizer step (micro-batches accumulate)
+    micro_batch: int = 4             # sequences per micro-batch (4 x 1024 = 4096 tokens); 8 spilled past 6 GB
+    lr: float = 0.02                 # Muon learning rate (matrix params)
+    lr_adam: float = 3e-3            # AdamW learning rate (embeddings, norms)
+    weight_decay: float = 0.1
+    warmup_frac: float = 0.02
+    cooldown_frac: float = 0.30
+    grad_clip: float = 1.0
+    lr_mult_both: float = 1.0        # scales both learning rates (the tuned-baseline duel uses it)
+    seed: int = 0
+    eval_tokens: int = 2_000_000
+    dtype: str = "bfloat16"
+
+
+# ======================================================================================
+# Model
+# ======================================================================================
+class RMSNorm(nn.Module):
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(d))
+        self.eps = eps
+
+    def forward(self, x):
+        return F.rms_norm(x, (x.size(-1),), self.weight, self.eps)
+
+
+def rope_cache(seq_len: int, head_dim: int, theta: float, device) -> tuple[torch.Tensor, torch.Tensor]:
+    inv = 1.0 / (theta ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(seq_len, device=device).float()
+    freqs = torch.outer(t, inv)                       # (T, D/2)
+    return freqs.cos(), freqs.sin()
+
+
+def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    # x: (B, H, T, D); rotate pairs (x1, x2) = (x[..., :D/2], x[..., D/2:])
+    d = x.size(-1) // 2
+    x1, x2 = x[..., :d], x[..., d:]
+    cos, sin = cos[: x.size(2)].to(x.dtype), sin[: x.size(2)].to(x.dtype)
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+
+
+class Attention(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.n_head = cfg.n_head
+        self.hd = cfg.d_model // cfg.n_head
+        self.rd = 32
+        self.wq = nn.Linear(cfg.d_model, self.n_head * (self.hd + self.rd), bias=False)
+        self.compress = nn.Linear(cfg.d_model, 128, bias=False)
+        self.latent_norm = RMSNorm(128)
+        self.expand = nn.Linear(128, 2 * self.n_head * self.hd, bias=False)
+        self.rotary = nn.Linear(cfg.d_model, self.rd, bias=False)
+        self.q_norm, self.k_norm = RMSNorm(self.hd), RMSNorm(self.hd)
+        self.wo = nn.Linear(self.n_head * self.hd, cfg.d_model, bias=False)
+        self.window = cfg.sliding_window
+
+    def forward(self, x, cos, sin):
+        B, T, _ = x.shape
+        q = self.wq(x).view(B, T, self.n_head, self.hd + self.rd).transpose(1, 2)
+        qc, qr = q.split([self.hd, self.rd], dim=-1)
+        kv = self.expand(self.latent_norm(self.compress(x)))
+        k, v = kv.view(B, T, self.n_head, 2 * self.hd).transpose(1, 2).chunk(2, dim=-1)
+        kr = self.rotary(x).view(B, T, 1, self.rd).transpose(1, 2)
+        qr, kr = apply_rope(qr, cos, sin), apply_rope(kr, cos, sin)
+        q = torch.cat([self.q_norm(qc), qr], dim=-1)
+        k = torch.cat([self.k_norm(k), kr.expand(-1, self.n_head, -1, -1)], dim=-1)
+        if self.window and self.window < T:
+            i = torch.arange(T, device=x.device)
+            mask = (i[None, :] <= i[:, None]) & (i[:, None] - i[None, :] < self.window)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        else:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return self.wo(y.transpose(1, 2).reshape(B, T, -1))
+
+
+class MLP(nn.Module):
+    """SwiGLU feed-forward."""
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.w_gate = nn.Linear(cfg.d_model, cfg.d_ff, bias=False)
+        self.w_up = nn.Linear(cfg.d_model, cfg.d_ff, bias=False)
+        self.w_down = nn.Linear(cfg.d_ff, cfg.d_model, bias=False)
+
+    def forward(self, x):
+        return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
+
+
+class Block(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.n1, self.n2 = RMSNorm(cfg.d_model), RMSNorm(cfg.d_model)
+        self.attn, self.mlp = Attention(cfg), MLP(cfg)
+        self.mix_logits = nn.Parameter(torch.eye(4).repeat(2, 1, 1) * 6.0)
+        self.read_logits = nn.Parameter(torch.zeros(2, 4))
+        self.write_logits = nn.Parameter(torch.tensor([[0.03, -0.01, -0.01, -0.01], [-0.01, 0.03, -0.01, -0.01]]))
+
+    def combine(self, x, branch, stage):
+        mixing = self.mix_logits[stage].float().exp()
+        for _ in range(20):
+            mixing = mixing / mixing.sum(dim=-1, keepdim=True)
+            mixing = mixing / mixing.sum(dim=-2, keepdim=True)
+        mixed = torch.einsum('ij,btjd->btid', mixing.to(x.dtype), x)
+        weights = 2 * self.write_logits[stage].sigmoid()
+        return mixed + branch.unsqueeze(2) * weights.to(x.dtype)[None, None, :, None]
+
+    def forward(self, x, cos, sin):
+        weights = self.read_logits[0].softmax(dim=-1).to(x.dtype)
+        branch = self.attn(self.n1((x * weights[None, None, :, None]).sum(2)), cos, sin)
+        x = self.combine(x, branch, 0)
+        weights = self.read_logits[1].softmax(dim=-1).to(x.dtype)
+        branch = self.mlp(self.n2((x * weights[None, None, :, None]).sum(2)))
+        return self.combine(x, branch, 1)
+
+
+class GPT(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.cfg = cfg
+        self.tok = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
+        self.norm = RMSNorm(cfg.d_model)
+        self.head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        if cfg.tie_embeddings:
+            self.head.weight = self.tok.weight
+        self.apply(self._init)
+        for b in self.blocks:                              # scaled residual-branch init
+            nn.init.normal_(b.attn.wo.weight, std=0.02 / math.sqrt(2 * cfg.n_layer))
+            nn.init.normal_(b.mlp.w_down.weight, std=0.02 / math.sqrt(2 * cfg.n_layer))
+
+    @staticmethod
+    def _init(m):
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, std=0.02)
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        cos, sin = rope_cache(T, 32, self.cfg.rope_theta, idx.device)
+        x = self.tok(idx).unsqueeze(2).expand(-1, -1, 4, -1)
+        for b in self.blocks:
+            x = b(x, cos, sin)
+        logits = self.head(self.norm(x.mean(dim=2)))
+        if targets is None:
+            return logits, None
+        # logits stay in the autocast dtype; a float32 copy of (B*T, 50304) alone is 0.8 GB at B=4
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
+
+
+def param_counts(model: nn.Module) -> tuple[int, int]:
+    total = sum(p.numel() for p in model.parameters())
+    embed = model.tok.weight.numel()
+    return total, total - embed
+
+
+# ======================================================================================
+# Muon optimizer (Newton-Schulz orthogonalized momentum; Jordan et al. 2024)
+# ======================================================================================
+def newton_schulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    X = X / (X.norm() + 1e-7)
+    transposed = G.size(0) > G.size(1)
+    if transposed:
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        B_ = b * A + c * A @ A
+        X = a * X + B_ @ X
+    return (X.T if transposed else X).to(G.dtype)
+
+
+class Muon(torch.optim.Optimizer):
+    def __init__(self, params, lr=0.02, momentum=0.95, weight_decay=0.0, nesterov=True):
+        super().__init__(params, dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nesterov=nesterov))
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                g = p.grad
+                st = self.state[p]
+                if "buf" not in st:
+                    st["buf"] = torch.zeros_like(g)
+                buf = st["buf"]
+                buf.mul_(group["momentum"]).add_(g)
+                g = g.add(buf, alpha=group["momentum"]) if group["nesterov"] else buf
+                u = newton_schulz5(g.reshape(g.size(0), -1)).view_as(g)
+                scale = max(1.0, g.size(0) / g.size(1)) ** 0.5     # shape-aware scaling
+                if group["weight_decay"]:
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
+                p.add_(u, alpha=-group["lr"] * scale)
+
+
+def build_optimizers(model: GPT, cfg: Config):
+    matrix = [p for n, p in model.named_parameters() if p.ndim == 2 and "tok" not in n and "head" not in n]
+    other = [p for n, p in model.named_parameters() if not (p.ndim == 2 and "tok" not in n and "head" not in n)]
+    return [Muon(matrix, lr=cfg.lr, weight_decay=cfg.weight_decay),
+            torch.optim.AdamW(other, lr=cfg.lr_adam, betas=(0.9, 0.95), weight_decay=cfg.weight_decay, eps=1e-10)]
+
+
+def lr_mult(step: int, total: int, cfg: Config) -> float:
+    warm = max(1, int(total * cfg.warmup_frac))
+    cool_start = int(total * (1 - cfg.cooldown_frac))
+    if step < warm:
+        return (step + 1) / warm
+    if step >= cool_start:
+        return max(0.0, (total - step) / max(1, total - cool_start))
+    return 1.0
+
+
+# ======================================================================================
+# Data
+# ======================================================================================
+class Shards:
+    def __init__(self, split: str, seq_len: int, seed: int):
+        files = sorted(DATA_DIR.glob("train_*.bin")) if split == "train" else [DATA_DIR / "val.bin"]
+        files = [f for f in files if f.exists()]
+        if not files and split == "train":
+            raise FileNotFoundError(f"no train shards in {DATA_DIR}; run nano/prepare_data.py")
+        # the validation split is normally absent from a training process: the harness runs the exam itself
+        self.data = [np.memmap(f, dtype=np.uint16, mode="r") for f in files]
+        self.seq_len = seq_len
+        self.rng = np.random.default_rng(seed)
+        self.pos = 0
+
+    def sample(self, n: int, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Random windows (train) from a random shard."""
+        d = self.data[self.rng.integers(len(self.data))]
+        starts = self.rng.integers(0, len(d) - self.seq_len - 1, size=n)
+        x = np.stack([d[s: s + self.seq_len] for s in starts]).astype(np.int64)
+        y = np.stack([d[s + 1: s + self.seq_len + 1] for s in starts]).astype(np.int64)
+        return torch.from_numpy(x).to(device, non_blocking=True), torch.from_numpy(y).to(device, non_blocking=True)
+
+    def sequential(self, n: int, device):
+        """Fixed sequential windows (val) so every run evaluates the same tokens."""
+        if not self.data:
+            return None
+        d = self.data[0]
+        T = self.seq_len
+        out_x, out_y = [], []
+        for _ in range(n):
+            if self.pos + T + 1 > len(d):
+                return None
+            out_x.append(d[self.pos: self.pos + T].astype(np.int64))
+            out_y.append(d[self.pos + 1: self.pos + T + 1].astype(np.int64))
+            self.pos += T
+        return (torch.from_numpy(np.stack(out_x)).to(device), torch.from_numpy(np.stack(out_y)).to(device))
+
+
+@torch.no_grad()
+def evaluate(model: GPT, cfg: Config, device, dtype) -> float:
+    model.eval()
+    val = Shards("val", cfg.seq_len, cfg.seed)
+    n_batches = max(1, cfg.eval_tokens // (cfg.micro_batch * cfg.seq_len))
+    losses = []
+    for _ in range(n_batches):
+        batch = val.sequential(cfg.micro_batch, device)
+        if batch is None:
+            break
+        x, y = batch
+        with torch.autocast("cuda", dtype=dtype):
+            _, loss = model(x, y)
+        losses.append(loss.item())
+    model.train()
+    return float(np.mean(losses)) if losses else float("nan")
+
+
+# ======================================================================================
+# Train
+# ======================================================================================
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    for k, v in asdict(Config()).items():
+        ap.add_argument(f"--{k.replace('_', '-')}", type=type(v) if not isinstance(v, bool) else int, default=v)
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--build-only", action="store_true")
+    ap.add_argument("--smoke-steps", type=int, default=0)
+    ap.add_argument("--smoke-seconds", type=float, default=0.0)
+    args = ap.parse_args()
+    cfg = Config(**{k: getattr(args, k) for k in asdict(Config())})
+    cfg.tie_embeddings = bool(cfg.tie_embeddings)
+
+    torch.manual_seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if cfg.dtype == "bfloat16" else torch.float16
+    model = GPT(cfg).to(device)
+    total, nonembed = param_counts(model)
+    report = {"arch": cfg.arch, "seed": cfg.seed, "params_total": total, "params_nonembed": nonembed,
+              "config": asdict(cfg)}
+    print(f"[nano] params total {total/1e6:.2f}M, non-embedding {nonembed/1e6:.2f}M, device {device}", flush=True)
+    out = Path(args.out) if args.out else None
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
+
+    def write(extra: dict) -> None:
+        report.update(extra)
+        if out:
+            (out / "metrics.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+
+    if args.build_only:
+        write({"mode": "build"})
+        print(json.dumps({k: report[k] for k in ("params_total", "params_nonembed")}))
+        return 0
+
+    opts = build_optimizers(model, cfg)
+    train = Shards("train", cfg.seq_len, cfg.seed)
+    accum = max(1, cfg.batch_tokens // (cfg.micro_batch * cfg.seq_len))
+    total_steps = max(1, int(cfg.tokens // cfg.batch_tokens))
+    if args.smoke_steps:
+        total_steps = args.smoke_steps
+    torch.cuda.reset_peak_memory_stats() if device == "cuda" else None
+    t0 = time.time()
+    losses: list[float] = []
+    step = 0
+    model.train()
+    while step < total_steps:
+        m = lr_mult(step, total_steps, cfg)
+        for o in opts:
+            for g in o.param_groups:
+                g["lr"] = (cfg.lr if isinstance(o, Muon) else cfg.lr_adam) * m * cfg.lr_mult_both
+        loss_acc = 0.0
+        for _ in range(accum):
+            x, y = train.sample(cfg.micro_batch, device)
+            with torch.autocast("cuda", dtype=dtype):
+                _, loss = model(x, y)
+            (loss / accum).backward()
+            loss_acc += loss.item() / accum
+        if cfg.grad_clip:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        for o in opts:
+            o.step()
+        model.zero_grad(set_to_none=True)
+        losses.append(loss_acc)
+        step += 1
+        if step % 50 == 0 or step == 1:
+            el = time.time() - t0
+            print(f"[nano] step {step}/{total_steps} loss {loss_acc:.4f} lr x{m:.2f} "
+                  f"{step * cfg.batch_tokens / el / 1e3:.1f}k tok/s", flush=True)
+        if args.smoke_seconds and time.time() - t0 > args.smoke_seconds:
+            break
+    wall = time.time() - t0
+    peak = torch.cuda.max_memory_allocated() / 1e9 if device == "cuda" else 0.0
+    res = {"steps": step, "tokens": step * cfg.batch_tokens, "wall_s": round(wall, 1),
+           "peak_vram_gb": round(peak, 2), "tok_per_s": round(step * cfg.batch_tokens / max(wall, 1e-6)),
+           "loss_first": round(float(np.mean(losses[:5])), 4) if losses else None,
+           "loss_last": round(float(np.mean(losses[-5:])), 4) if losses else None,
+           "loss_curve": [round(float(l), 4) for l in losses]}   # per-step curve: matched-step comparisons
+    if args.smoke_steps or args.smoke_seconds:
+        res["mode"] = "smoke"
+        write(res)
+        print(json.dumps(res))
+        return 0
+    if out:                                   # the harness's exam (nano/exam.py) reads these weights
+        torch.save({"state_dict": model.state_dict(), "config": asdict(cfg)}, out / "model.pt")
+    val_loss = evaluate(model, cfg, device, dtype)   # a self-report; absent when the split is hidden
+    has_val = val_loss == val_loss
+    res.update({"mode": "full", "val_loss": round(val_loss, 4) if has_val else None,
+                "val_bpb": round(val_loss / math.log(2) * 0.2446, 4) if has_val else None})   # tokens/byte ~0.2446 for GPT-2 BPE on English web text (approx)
+    write(res)
+    print(json.dumps(res))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+
+PART UNDER STUDY: Sequence mixing: latent KV compression and expansion
+CURRENT DESIGN OF THIS PART: Keys and values are produced from a 128-dim RMS-normed latent (compress 384->128, expand 128->768) shared by all six heads, while queries come from a full 384->576 projection. The latent is a user-specified MLA substitute for V4 token compression.
+CODE THIS PART MAY TOUCH: Attention.__init__ (compress, latent_norm, expand, wq), Attention.forward up to q/k/v construction
+ASSUMPTIONS OF THIS PART:
+- A 128-dim latent is wide enough for both keys and values of six heads at this width.
+- Keys and values should be derived from the same latent rather than separately compressed.
+- Compression is worth paying for at 1024 context where no KV-cache pressure exists.
+- Normalizing the latent before expansion is harmless to key/value scale.
+- Query projection need not be compressed, so q and kv live in different subspaces.
+
+Direction INWARD: keep the paradigm of this part. Treat the assumptions below as FIXED and propose improvements inside them.
+
+HOW THE BASELINE BEHAVES (measured on this card):
+# How the baseline behaves (100 steps, seed 0, measured 2026-10-15T00:58:27)
+
+- At step 100, loss by position: 0-64: 5.964, 64-256: 6.496, 256-1024: 6.423 (late minus early: +0.459 nats).
+- Loss by token frequency: rank 0-100: 3.163 (42% of tokens), rank 100-1000: 6.829 (21% of tokens), rank 1000-10000: 8.979 (26% of tokens), rank 10000-50304: 11.613 (12% of tokens); rarest minus most frequent: +8.450 nats.
+- Gradient norms by layer (attention): first 0.2406, last 0.0288, min at layer 2, max at layer 0; (MLP): first 0.1992, last 0.0508.
+- Attention entropy (1 = flat): layer values [0.957, 0.903, 0.854, 0.804, 0.771, 0.78, 0.698, 0.704, 0.705, 0.667, 0.711, 0.763]; lowest at layer 9 (0.667), highest at layer 0 (0.957).
+- Residual stream RMS after each block: first 1.403, last 10.893 (growth x7.8).
+- Probe loss fell from 10.8897 at step 0 to 6.4081 at step 100; the per-10-step improvement halved after step 10.
+- Recall tokens (bigram already seen in the window, 13% of targets): loss 4.475 against 6.704 for the rest.
+- Max attention logit by layer: [7.81, 15.5, 13.5, 18.12, 15.5, 16.0, 17.38, 19.75, 22.75, 20.12, 20.88, 16.62] (largest at layer 8); first-token attention mass: [0.0056, 0.0059, 0.0041, 0.0049, 0.0037, 0.0036, 0.0034, 0.0033, 0.0031, 0.0023, 0.0034, 0.0031].
+- Update size per step (||dw||/||w||): median 0.02009, max 0.03265 (spread x2).
+
+| layer | grad norm attn | grad norm mlp | output RMS | attention entropy |
+|---|---|---|---|---|
+| 0 | 0.2406 | 0.1992 | 1.403 | 0.957 |
+| 1 | 0.0236 | 0.1156 | 2.707 | 0.903 |
+| 2 | 0.0195 | 0.0895 | 3.985 | 0.854 |
+| 3 | 0.0222 | 0.0643 | 4.953 | 0.804 |
+| 4 | 0.021 | 0.0557 | 5.855 | 0.771 |
+| 5 | 0.0221 | 0.0484 | 6.659 | 0.78 |
+| 6 | 0.0276 | 0.0453 | 7.42 | 0.698 |
+| 7 | 0.0327 | 0.039 | 8.094 | 0.704 |
+| 8 | 0.0339 | 0.0407 | 8.758 | 0.705 |
+| 9 | 0.0338 | 0.0437 | 9.452 | 0.667 |
+| 10 | 0.0295 | 0.0413 | 10.074 | 0.711 |
+| 11 | 0.0288 | 0.0508 | 10.893 | 0.763 |
+
+loss curve: step 1: 10.8805, step 26: 7.0622, step 51: 6.5902, step 76: 6.4182, step 100: 6.1789
+
+
+ANOMALIES IN THE MEASUREMENTS (each replicated on several seeds and filtered; a cell that sits off the trend of the rest of its family):
+- grad attn in layer 0: 0.2908 is 0.2516 above what its two neighbours predict (extrapolated at the end of the range) (z 7.03, same sign on 3 seeds) [cell: grad]
+- grad mlp in layer 0: 0.2293 is 0.0718 above what its two neighbours predict (extrapolated at the end of the range) (z 5.78, same sign on 3 seeds) [cell: grad]
+- grad attn in layer 2: 0.0259 is 0.0039 below what its two neighbours predict (z -3.61, same sign on 3 seeds) [cell: grad]
+
+For at least two of your sketches start from one of these rows: restate it in one sentence, name three rival causes including an artifact of the measurement, name a five-minute probe on a saved checkpoint that would separate them, and sketch the change that follows if the least popular rival is true. Say in TARGET which cell the sketch is meant to move.
+
+The measurements above are how the baseline actually behaves. Start from the weakest point they show (the
+positions, the token classes, the layers, the phase of training) and sketch changes that target it; say in
+MECHANISM which measurement each sketch is meant to move, and in PREDICTION by how much.
+
+WHAT THE STRONGEST OPEN MODELS DO NOW (a digest with sources; port a component down to this scale, or go past it; a component counts only if it should lower validation loss at the fixed budget):
+# Frontier digest: what the strongest open language models do now
+
+As of 2026-10-13. Sources: DeepSeek-V4 report (arXiv 2606.19348, Jun 2026), Kimi K3 repo/report (Jul 2026), Gemma 4 report (arXiv 2607.02770, Jul 2026), MiMo-V2-Flash report (arXiv 2601.02780, Jan 2026), GLM-5 report (arXiv 2602.15763, Feb 2026) and zai-org README, MiniMax M3 report (arXiv 2606.13392) and blog, Olmo Hybrid (arXiv 2604.03444, Apr 2026), Kimi AttnRes (arXiv 2603.15031, Mar 2026), Kimi Linear (arXiv 2510.26692), plus Raschka's architecture posts. I found no usable architecture source for Llama, Baichuan, InternLM or ByteDance Seed. Hunyuan, Qwen3.5/3.6 and Reflection Beam rest on model-card or secondary summaries. (https://arxiv.org/abs/2606.19348)
+
+## The strongest open models now
+- Beam, Reflection AI, announced 2026-10-05, weights and report promised "later this month": 501B total, 23B active; interleaved local/global attention, fine-grained routed experts, a "controlled residual stream" (no further detail) (https://techcrunch.com/2026/10/05/reflection-debuts-beam-a-open-weight-ai-model-to-rival-chinese-models-at-lower-compute-cost/)
+- Kimi K3, Moonshot, Jul 2026: 2.8T total, 104B active; 93 layers, 69 Kimi Delta Attention (linear) + 24 gated MLA, 896 experts (16 routed + 2 shared) in a 3584-d latent space, Attention Residuals, 1M context (https://github.com/MoonshotAI/Kimi-K3)
+- Inkling, Thinking Machines, Jul 2026: 975B total, 41B active; 66 layers at 5:1 sliding(512)/global, no RoPE (learned input-dependent relative-position bias), four causal short convs per layer (https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html)
+- Gemma 4, Google, Jul 2026: dense 12B/31B and 26B-A4B (3.8B active); 5:1 local/global, p-RoPE on global layers, cross-layer KV sharing in E2B/E4B, MTP drafter (https://arxiv.org/html/2607.02770)
+- Tencent Hy4-preview, 770B total, 49B active: gated DeepSeek-style sparse attention with cross-layer index reuse, 4-stream identity hyper-connections, 256 routed + 1 shared expert (https://mer.vin/news/tencents-hy4-preview-edges-out-glm-5-3-and-kimi-k3/)
+- Nemotron 3 Ultra, NVIDIA, Jun 2026: 550B total, 55B active; 108 layers = 48 Mamba-2 + 48 LatentMoE + 12 GQA attention (https://sebastianraschka.com/blog/2026/nemotron-3-ultra-latent-moe.html)
+- MiniMax M3, 2026-06-01: about 428B total, 23B active (one source says 22B); block-sparse attention (MSA) on a GQA backbone with full, uncompressed KV (https://www.marktechpost.com/2026/06/01/minimax-releases-minimax-m3-with-msa-architecture-supporting-1m-token-context-native-multimodality-and-agentic-coding/)
+- DeepSeek-V4-Pro/Flash, Jun 2026: 1.6T/49B and 284B/13B; interleaved compressed-sparse and heavily-compressed attention, mHC residuals, hash-routed early MoE layers (https://arxiv.org/html/2606.19348v1)
+- GLM-5.2/5.3-Flash, Z.ai: 744B/40B with DSA plus IndexShare; the Flash model (320B/18B) is the first GLM linear-attention hybrid, with mHC (https://github.com/zai-org/GLM-5)
+- Qwen3.5-397B-A17B (Qwen3.6-35B-A3B and 27B dense followed in Apr 2026): 60 layers, 45 Gated DeltaNet + 15 gated softmax-attention (https://sebastianraschka.com/llm-architecture-gallery/gated-attention/)
+- MiMo-V2-Flash, Xiaomi, Jan 2026: 309B/15B; 5:1 sliding(128)/global, learnable sink bias, 256 experts with 8 active and no shared expert, 3-layer MTP (https://arxiv.org/html/2601.02780v1)
+- Olmo Hybrid, Ai2, Apr 2026: 7B; Olmo 3 7B with its sliding-window layers replaced by Gated DeltaNet (https://arxiv.org/abs/2604.03444)
+
+## Components, with measured effects
+- Linear/full hybrid: Gated DeltaNet 3:1 (Qwen3-Next/3.5, Olmo Hybrid, Solar Open 2 uses Kimi Delta Attention 3:1), KDA+MLA (Kimi Linear, K3), Mamba-2 (Nemotron). Kimi Linear, same recipe: beats full MLA, up to 75% less KV, up to 6x decode at 1M. Olmo Hybrid reaches Olmo 3's MMLU with 49% fewer tokens (https://alphaxiv.org/abs/2510.26692; https://allenai.org/blog/olmohybrid)
+- Learned top-k sparse attention (DSA): GLM-5, Hy4. GLM-5.2 IndexShare reuses one indexer across 4 sparse layers: per-token FLOPs cut 2.9x at 1M (https://github.com/zai-org/GLM-5)
+- Compressed KV attention (V4): CSA compresses every m tokens (m=4 per Raschka) with top-k selection and shared-KV MQA; HCA compresses 128 tokens per entry, dense. Both add a 128-token window branch. V4-Pro uses 27% of V3.2's FLOPs and 10% of its KV at 1M; Flash 10% and 7% (https://arxiv.org/html/2606.19348v1)
+- Block-sparse attention (MSA): an index branch scores KV blocks, then exact attention runs on top-k blocks per GQA group. On a 109B testbed: 28.4x less attention compute at 1M, "on par with GQA", 14.2x prefill and 7.6x decode on H800 (https://arxiv.org/abs/2606.13392)
+- Sliding-window/global interleave: gpt-oss 1:1 (W=128), Step 3.5 3:1, Gemma 4 and Inkling and MiMo 5:1. MiMo ablation (32B dense): W=128 beats W=512 on RULER-32k (89.4 vs 84.7) and MRCR (34.4 vs 19.6) at equal MMLU 58.3 (https://arxiv.org/html/2601.02780v1)
+- Attention sink (learned logit in softmax denominator): gpt-oss, MiMo, V4. MiMo ablation: MMLU 54.9 without vs 58.3 with sink (https://arxiv.org/html/2601.02780v1)
+- Attention output gate: Qwen3-Next/3.5, Hy4, Laguna. A 30-variant study found a post-SDPA sigmoid gate best: fewer sinks, better long-context extrapolation, under 2% latency (https://sebastianraschka.com/llm-architecture-gallery/gated-attention/)
+- Cross-layer KV sharing and key=value on global layers (Gemma 4): last 20 of 35 (E2B) and 18 of 42 (E4B) layers reuse KV; global KV cache down up to 37.5%. No quality ablation reported (https://arxiv.org/html/2607.02770)
+- Positional scheme: partial RoPE (V4 last 64 dims, MiMo first 64), p-RoPE p=0.25 on Gemma 4 global layers, NoPE in Kimi Linear's MLA layers, none in Inkling (relative-position bias). Only MiMo's cost-free sink/window ablations above are measured here; no RoPE ablation found (https://arxiv.org/html/2607.02770; https://magazine.sebastianraschka.com/p/the-big-llm-architecture-comparison)
+- QK normalisation: V4 RMSNorms query heads and the compressed KV head and says this removes the need for QK-Clip. Gemma 4 also uses QKNorm (https://arxiv.org/html/2606.19348v1)
+- Short causal convs: Inkling, kernel 4 after K and V projections and on both branch outputs before the residual add. The post notes no ablation isolates them (https://www.sebastianraschka.com/blog/2026/inkling-architecture-benchmark-notes.html)
+- Fine-grained MoE (routed/total + shared): Hy4 8/256+1, Step 3.5 8/288+1, Gemma 4 8/128+1, MiMo 8/256+0, Inkling 6/256+2, K3 16/896+2, gpt-oss 4/128, Nemotron 22/512+shared (https://hf.co/stepfun-ai/Step-3.5-Flash-Base-Midtrain; https://arxiv.org/html/2601.02780v1)
+- MoE routing (V4): sqrt(softplus) affinity replaces sigmoid, aux-loss-free balancing plus a slight sequence-wise loss, node-limit constraint removed, hash-by-token-ID routing in the first MoE blocks. No ablation in the text read (https://arxiv.org/html/2606.19348v1)
+- LatentMoE: routing and experts run in a down-projected space (Nemotron 8192→2048, 4x; K3 latent 3584). Report says routed parameter loads and all-to-all fall by d/ℓ (about 4x), but layer speedup is below 4x (https://arxiv.org/html/2512.20856v1; https://sebastianraschka.com/blog/2026/nemotron-3-ultra-latent-moe.html)
+- Multi-stream residual (mHC): V4 expands the residual to n=4 streams with a doubly stochastic mixing matrix (Sinkhorn, 20 iterations). Overhead is 6.7% of the overlapped pipeline stage; no quality ablation in the text read. Hy4 uses identity hyper-connections, GLM-5.3-Flash uses mHC (https://arxiv.org/html/2606.19348v1)
+- Attention Residuals (K3): each layer takes a softmax-attention-weighted mix of earlier layer outputs, with a block variant. On Kimi Linear 48B/3B at 1.4T tokens: more uniform output magnitude and gradients across depth, better on all evaluated tasks (https://arxiv.org/pdf/2603.15031.pdf)
+- Norm placement: Gemma 4 pre+post RMSNorm; Olmo 3 post-norm; Inkling adds an RMSNorm directly after the embedding lookup. No measured effects found (https://sebastianraschka.com/blog/2026/gemma-4-release-notes.html)
+- Multi-token prediction: V4 reuses V3's MTP; MiMo's block is dense FFN + sliding-window attention, 0.33B each. With 3 layers, acceptance length reaches about 3.6 and the speedup is 2.39x (table range 1.86-2.70x). GLM-5.2's improved MTP gains up to 20% acceptance. Nemotron has 2 shared-parameter heads. Gemma 4 has a separate drafter (https://arxiv.org/html/2601.02780v1)
+- Embeddings and head: Gemma 4 E2B/E4B add per-layer embeddings (vocab 262k); the drafter's head drops from d×262k to d×4096 via token clusters with similar acceptance. K3 vocab is 160K (https://arxiv.org/html/2607.02770)
+- Depth reuse: Nanbeige 4.2 3B runs its 22-layer stack twice; two passes kept about 75% of standard token efficiency and more passes gave little gain (https://sebastianraschka.com/blog/2026/notable-open-weight-models-this-week.html)
+- Per-layer head budgeting (Laguna XS.2): 8 KV heads fixed; 6 query heads per KV head on global layers, 8 on sliding layers (https://magazine.sebastianraschka.com/p/recent-developments-in-llm-architectures)
+
+## Not settled
+- Linear (Qwen, Kimi, Olmo, Nemotron, Solar), learned-sparse (DeepSeek, GLM, Hy4, MiniMax M3) and windowed (Gemma, MiMo, gpt-oss) attention are all in use. MiniMax M2 used full attention, and MiniMax says MSA matched full attention on "the vast majority of capabilities" without per-task numbers (https://www.minimax.io/blog/minimax-m3)
+- Many headline components have no isolated ablation in their reports: Gemma 4 reports none, and Inkling's convs, bias and embedding norm are unablated. The V4 text I read has no mHC quality ablation, and K3's "2.5x scaling efficiency over K2" comes with no methodology (https://arxiv.org/html/2607.02770)
+- Residual depth mixing has three competing designs (mHC, identity hyper-connections, Attention Residuals), with no cross-comparison found (https://arxiv.org/pdf/2603.15031.pdf)
+- Shared experts range from none (MiMo) to 1-2 (Gemma, Step, K3, Inkling), and positional schemes range from partial RoPE to p-RoPE to NoPE to learned bias. Sources disagree on some counts (MiniMax M3 active 22B vs 23B; gpt-oss router softmax vs sigmoid) (https://arxiv.org/html/2601.02780v1)
+- Efficiency figures mix architecture with serving stacks, e.g. Nemotron 3 Ultra's 5.9x/4.8x/1.6x throughput over GLM-5.1/Kimi-K2.6/Qwen3.5, run on TensorRT-LLM against vLLM (https://sebastianraschka.com/blog/2026/nemotron-3-ultra-latent-moe.html)
+
+AMBITIOUS IDEAS, A QUOTA BY CONSTRUCTION: at least 4 of your sketches must be leaps (KIND: leap). A leap drops or flips one rule the current recipe takes for granted (what a loss is, what a layer computes, which tokens see which, how an update is made, what is fixed across layers or phases, what is shared and what is separate), keeps the rest of the recipe as it is, and might well fail. It is judged by whether its mechanism is specific and its test can kill it, never by how bold it sounds. A known technique applied unchanged is a port, not a leap, and is reclassified when found. Before writing your leaps, list twelve one-line seeds that each break a different rule, keep the three farthest from what the brief, the findings and the other seeds already contain, and write only those in full. Put the seed list under a line reading "PASS 1 (scratch):"; everything from the first IDEA: block on is what counts.
+
+YOUR LEAP OPERATOR FOR THIS CONTEXT (existence): the recipe has measured headroom against its rules (parameters below the cap, step time below the cap, memory below the card); assume a change exists that recovers a third of the gap between this recipe and a recipe twice its size at no more than two percent extra step time; give three mechanisms that could be it and, for each, what would have to be true at the first learning check; the leaps are those mechanisms.
+
+List 5 to 8 distinct idea sketches. Do not write code. Use exactly this form for each:
+
+IDEA: <short name>
+MECHANISM: <one or two sentences: what changes and why it should lower validation loss at the fixed budget>
+PREDICTION: <the observable effect: on the loss curve, the step time, the parameter count>
+TEST: <the cheapest check that would falsify it, for example a 1-minute smoke run comparison, a 3-step timing, a parameter count>
+SOURCE: <"own" if the idea is yours, else the URL of the paper, post or repo it comes from or builds on>
+TARGET: <the measured quantity this should move and in which direction: one of the diagnostic cells (loss on rare tokens, loss at late positions, attention entropy in deep layers, residual RMS growth, gradient norm spread, max attention logit, first-token attention mass, recall-token loss, update-norm spread) or "validation loss only">
+SCOPE: <"validation loss at 1024" if the benefit should show in this exam; otherwise what it is really about (long context, inference cost, routing balance, robustness)>
+KIND: <"port" for a known technique adapted to this recipe (SOURCE must then name where it comes from); "tune" for a change of one or two existing constants only (a learning rate, warmup, decay, clipping, an init scale, a head count), with the reason in MECHANISM and the range worth sweeping in TEST; or "leap" for an idea that drops or flips a rule the recipe takes for granted>
+BREAKS: <leaps only: the rule of the recipe this idea drops or flips, as one testable sentence>
+KEEPS: <leaps only: the conventional core left intact, so the change stays trainable and comparable>
+P_SUCCESS: <leaps only: your own chance that it lowers the loss at this budget, a number at most 0.2>
+KILL: <leaps only: the number at the first learning check (45 matched steps) that discards it>
+
+Separate sketches with a blank line. Vary the part of the system each sketch touches.

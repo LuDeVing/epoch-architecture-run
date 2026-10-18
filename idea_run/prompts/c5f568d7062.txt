@@ -1,0 +1,550 @@
+Interrogate ONE idea before anyone builds it. The idea belongs to this part of the recipe: Sequence mixing: latent KV compression and expansion. Current design of that part: Keys and values are produced from a 128-dim RMS-normed latent (compress 384->128, expand 128->768) shared by all six heads, while queries come from a full 384->576 projection. The latent is a user-specified MLA substitute for V4 token compression.
+
+CONSTRAINTS:
+- C1. Same data: the FineWeb-Edu shards in D:/AGI-lab/data/fineweb, loaded through the Shards class as in the baseline.
+- C2. Same token budget: --tokens 50e6. The exam is run by the harness on the weights the script saves (model.pt): 2M validation tokens in fixed 1024-token windows, plain next-token cross entropy from GPT(cfg).forward(idx) logits. The script never sees val.bin; evaluate() stays as it is and is only a self-report.
+- C3. Non-embedding parameter count at most 10 percent above the baseline (21.24M); fewer parameters are always allowed.
+- C4. Peak VRAM under 5.6 GB and step time at most 2x the baseline on an RTX 4050 (6 GB).
+- C5. The file keeps the same command-line interface and still writes metrics.json with val_loss; --build-only, --smoke-steps and --smoke-seconds must keep working.
+- C6. No dependencies beyond torch, numpy and the plain standard library; socket, urllib, http, subprocess, ctypes, multiprocessing, importlib, pickle and shutil are denied; no network; no subprocesses; no reference to the validation split anywhere in training code. The process runs under a tripwire that fails the candidate on any of these.
+- C7. The metric is the exam's validation loss after the fixed budget; a change counts only if it beats the pooled baseline mean by more than 0.005 nats with a one-sided Welch test at p < 0.01 over at least 3 seeds.
+
+THE CURRENT SCRIPT (the idea will be built into this file):
+```python
+# IDEA: strongest open model, dense skeleton scaled to 21M
+# BASED ON: DeepSeek-V4 config https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/raw/main/config.json; Kimi-K3 config https://huggingface.co/moonshotai/Kimi-K3/raw/main/config.json
+# EXCLUDED: MoE, sparse/compressed long-context attention, prediction extras and vision: size/context constraints; Kimi KDA and attention residuals: follow DeepSeek
+# FIDELITY: partial, user-specified MLA substitutes V4 token compression; d=384, layers=12, heads=6, content=64, latent=128, rotary=32, context=1024, FFN=1077, tied head; static 4-stream Sinkhorn mixing substitutes dynamic mHC; QK RMSNorm, asymmetric stream write start and baseline residual initialization are local choices; theta=10000, epsilon=1e-6, stream count=4 and Sinkhorn=20 sourced from V4 config
+"""nano trainer: a small, readable language-model training script that the HTSA loop proposes
+changes against. Fixed token budget, fixed data, fixed evaluation; everything else is fair game.
+
+Baseline architecture (research_notes/architectures/nano_specs.md, section A, "nano-GPT2"):
+pre-norm Transformer, RMSNorm, rotary positions, SwiGLU MLP, no biases, tied embeddings,
+d=384, 12 layers, 6 heads x 64. Optimizer: Muon for 2-D weights, AdamW for the rest.
+
+Modes (the verifier in nano/check.py uses them as rungs):
+  --build-only            construct the model, print parameter counts, exit
+  --smoke-steps N         run N optimizer steps on real data, report step time and peak memory
+  --smoke-seconds S       train for S seconds, report whether loss fell
+  (default)               train for --tokens tokens, evaluate, write metrics.json
+
+Outputs metrics.json in --out: {val_loss, val_bpb, params_total, params_nonembed, tokens,
+steps, wall_s, peak_vram_gb, loss_first, loss_last, loss_curve, arch, seed} and, after a full run,
+model.pt (weights + config) for the harness's own exam (nano/exam.py). The data folder comes from
+HTSA_DATA_DIR; under the harness it holds the train shards only, so val_loss is None there.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import time
+from dataclasses import dataclass, asdict
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+DATA_DIR = Path(os.environ.get("HTSA_DATA_DIR") or (Path(os.environ.get("HTSA_LAB_ROOT", r"D:\AGI-lab")) / "data" / "fineweb"))
+
+
+# ======================================================================================
+# Config
+# ======================================================================================
+@dataclass
+class Config:
+    arch: str = "gpt2"
+    vocab_size: int = 50304          # GPT-2 BPE (50257) padded to a multiple of 64
+    n_layer: int = 12
+    n_head: int = 6
+    n_kv_head: int = 6               # = n_head for MHA; fewer for GQA
+    d_model: int = 384
+    d_ff: int = 1077                 # SwiGLU hidden size
+    seq_len: int = 1024
+    tie_embeddings: bool = True
+    rope_theta: float = 10000.0
+    sliding_window: int = 0          # 0 = full causal attention
+    # training
+    tokens: float = 50e6
+    batch_tokens: int = 32768        # tokens per optimizer step (micro-batches accumulate)
+    micro_batch: int = 4             # sequences per micro-batch (4 x 1024 = 4096 tokens); 8 spilled past 6 GB
+    lr: float = 0.02                 # Muon learning rate (matrix params)
+    lr_adam: float = 3e-3            # AdamW learning rate (embeddings, norms)
+    weight_decay: float = 0.1
+    warmup_frac: float = 0.02
+    cooldown_frac: float = 0.30
+    grad_clip: float = 1.0
+    lr_mult_both: float = 1.0        # scales both learning rates (the tuned-baseline duel uses it)
+    seed: int = 0
+    eval_tokens: int = 2_000_000
+    dtype: str = "bfloat16"
+
+
+# ======================================================================================
+# Model
+# ======================================================================================
+class RMSNorm(nn.Module):
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(d))
+        self.eps = eps
+
+    def forward(self, x):
+        return F.rms_norm(x, (x.size(-1),), self.weight, self.eps)
+
+
+def rope_cache(seq_len: int, head_dim: int, theta: float, device) -> tuple[torch.Tensor, torch.Tensor]:
+    inv = 1.0 / (theta ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(seq_len, device=device).float()
+    freqs = torch.outer(t, inv)                       # (T, D/2)
+    return freqs.cos(), freqs.sin()
+
+
+def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    # x: (B, H, T, D); rotate pairs (x1, x2) = (x[..., :D/2], x[..., D/2:])
+    d = x.size(-1) // 2
+    x1, x2 = x[..., :d], x[..., d:]
+    cos, sin = cos[: x.size(2)].to(x.dtype), sin[: x.size(2)].to(x.dtype)
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+
+
+class Attention(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.n_head = cfg.n_head
+        self.hd = cfg.d_model // cfg.n_head
+        self.rd = 32
+        self.wq = nn.Linear(cfg.d_model, self.n_head * (self.hd + self.rd), bias=False)
+        self.compress = nn.Linear(cfg.d_model, 128, bias=False)
+        self.latent_norm = RMSNorm(128)
+        self.expand = nn.Linear(128, 2 * self.n_head * self.hd, bias=False)
+        self.rotary = nn.Linear(cfg.d_model, self.rd, bias=False)
+        self.q_norm, self.k_norm = RMSNorm(self.hd), RMSNorm(self.hd)
+        self.wo = nn.Linear(self.n_head * self.hd, cfg.d_model, bias=False)
+        self.window = cfg.sliding_window
+
+    def forward(self, x, cos, sin):
+        B, T, _ = x.shape
+        q = self.wq(x).view(B, T, self.n_head, self.hd + self.rd).transpose(1, 2)
+        qc, qr = q.split([self.hd, self.rd], dim=-1)
+        kv = self.expand(self.latent_norm(self.compress(x)))
+        k, v = kv.view(B, T, self.n_head, 2 * self.hd).transpose(1, 2).chunk(2, dim=-1)
+        kr = self.rotary(x).view(B, T, 1, self.rd).transpose(1, 2)
+        qr, kr = apply_rope(qr, cos, sin), apply_rope(kr, cos, sin)
+        q = torch.cat([self.q_norm(qc), qr], dim=-1)
+        k = torch.cat([self.k_norm(k), kr.expand(-1, self.n_head, -1, -1)], dim=-1)
+        if self.window and self.window < T:
+            i = torch.arange(T, device=x.device)
+            mask = (i[None, :] <= i[:, None]) & (i[:, None] - i[None, :] < self.window)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        else:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return self.wo(y.transpose(1, 2).reshape(B, T, -1))
+
+
+class MLP(nn.Module):
+    """SwiGLU feed-forward."""
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.w_gate = nn.Linear(cfg.d_model, cfg.d_ff, bias=False)
+        self.w_up = nn.Linear(cfg.d_model, cfg.d_ff, bias=False)
+        self.w_down = nn.Linear(cfg.d_ff, cfg.d_model, bias=False)
+
+    def forward(self, x):
+        return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
+
+
+class Block(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.n1, self.n2 = RMSNorm(cfg.d_model), RMSNorm(cfg.d_model)
+        self.attn, self.mlp = Attention(cfg), MLP(cfg)
+        self.mix_logits = nn.Parameter(torch.eye(4).repeat(2, 1, 1) * 6.0)
+        self.read_logits = nn.Parameter(torch.zeros(2, 4))
+        self.write_logits = nn.Parameter(torch.tensor([[0.03, -0.01, -0.01, -0.01], [-0.01, 0.03, -0.01, -0.01]]))
+
+    def combine(self, x, branch, stage):
+        mixing = self.mix_logits[stage].float().exp()
+        for _ in range(20):
+            mixing = mixing / mixing.sum(dim=-1, keepdim=True)
+            mixing = mixing / mixing.sum(dim=-2, keepdim=True)
+        mixed = torch.einsum('ij,btjd->btid', mixing.to(x.dtype), x)
+        weights = 2 * self.write_logits[stage].sigmoid()
+        return mixed + branch.unsqueeze(2) * weights.to(x.dtype)[None, None, :, None]
+
+    def forward(self, x, cos, sin):
+        weights = self.read_logits[0].softmax(dim=-1).to(x.dtype)
+        branch = self.attn(self.n1((x * weights[None, None, :, None]).sum(2)), cos, sin)
+        x = self.combine(x, branch, 0)
+        weights = self.read_logits[1].softmax(dim=-1).to(x.dtype)
+        branch = self.mlp(self.n2((x * weights[None, None, :, None]).sum(2)))
+        return self.combine(x, branch, 1)
+
+
+class GPT(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.cfg = cfg
+        self.tok = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
+        self.norm = RMSNorm(cfg.d_model)
+        self.head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        if cfg.tie_embeddings:
+            self.head.weight = self.tok.weight
+        self.apply(self._init)
+        for b in self.blocks:                              # scaled residual-branch init
+            nn.init.normal_(b.attn.wo.weight, std=0.02 / math.sqrt(2 * cfg.n_layer))
+            nn.init.normal_(b.mlp.w_down.weight, std=0.02 / math.sqrt(2 * cfg.n_layer))
+
+    @staticmethod
+    def _init(m):
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, std=0.02)
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        cos, sin = rope_cache(T, 32, self.cfg.rope_theta, idx.device)
+        x = self.tok(idx).unsqueeze(2).expand(-1, -1, 4, -1)
+        for b in self.blocks:
+            x = b(x, cos, sin)
+        logits = self.head(self.norm(x.mean(dim=2)))
+        if targets is None:
+            return logits, None
+        # logits stay in the autocast dtype; a float32 copy of (B*T, 50304) alone is 0.8 GB at B=4
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
+
+
+def param_counts(model: nn.Module) -> tuple[int, int]:
+    total = sum(p.numel() for p in model.parameters())
+    embed = model.tok.weight.numel()
+    return total, total - embed
+
+
+# ======================================================================================
+# Muon optimizer (Newton-Schulz orthogonalized momentum; Jordan et al. 2024)
+# ======================================================================================
+def newton_schulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    X = X / (X.norm() + 1e-7)
+    transposed = G.size(0) > G.size(1)
+    if transposed:
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        B_ = b * A + c * A @ A
+        X = a * X + B_ @ X
+    return (X.T if transposed else X).to(G.dtype)
+
+
+class Muon(torch.optim.Optimizer):
+    def __init__(self, params, lr=0.02, momentum=0.95, weight_decay=0.0, nesterov=True):
+        super().__init__(params, dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nesterov=nesterov))
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                g = p.grad
+                st = self.state[p]
+                if "buf" not in st:
+                    st["buf"] = torch.zeros_like(g)
+                buf = st["buf"]
+                buf.mul_(group["momentum"]).add_(g)
+                g = g.add(buf, alpha=group["momentum"]) if group["nesterov"] else buf
+                u = newton_schulz5(g.reshape(g.size(0), -1)).view_as(g)
+                scale = max(1.0, g.size(0) / g.size(1)) ** 0.5     # shape-aware scaling
+                if group["weight_decay"]:
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
+                p.add_(u, alpha=-group["lr"] * scale)
+
+
+def build_optimizers(model: GPT, cfg: Config):
+    matrix = [p for n, p in model.named_parameters() if p.ndim == 2 and "tok" not in n and "head" not in n]
+    other = [p for n, p in model.named_parameters() if not (p.ndim == 2 and "tok" not in n and "head" not in n)]
+    return [Muon(matrix, lr=cfg.lr, weight_decay=cfg.weight_decay),
+            torch.optim.AdamW(other, lr=cfg.lr_adam, betas=(0.9, 0.95), weight_decay=cfg.weight_decay, eps=1e-10)]
+
+
+def lr_mult(step: int, total: int, cfg: Config) -> float:
+    warm = max(1, int(total * cfg.warmup_frac))
+    cool_start = int(total * (1 - cfg.cooldown_frac))
+    if step < warm:
+        return (step + 1) / warm
+    if step >= cool_start:
+        return max(0.0, (total - step) / max(1, total - cool_start))
+    return 1.0
+
+
+# ======================================================================================
+# Data
+# ======================================================================================
+class Shards:
+    def __init__(self, split: str, seq_len: int, seed: int):
+        files = sorted(DATA_DIR.glob("train_*.bin")) if split == "train" else [DATA_DIR / "val.bin"]
+        files = [f for f in files if f.exists()]
+        if not files and split == "train":
+            raise FileNotFoundError(f"no train shards in {DATA_DIR}; run nano/prepare_data.py")
+        # the validation split is normally absent from a training process: the harness runs the exam itself
+        self.data = [np.memmap(f, dtype=np.uint16, mode="r") for f in files]
+        self.seq_len = seq_len
+        self.rng = np.random.default_rng(seed)
+        self.pos = 0
+
+    def sample(self, n: int, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Random windows (train) from a random shard."""
+        d = self.data[self.rng.integers(len(self.data))]
+        starts = self.rng.integers(0, len(d) - self.seq_len - 1, size=n)
+        x = np.stack([d[s: s + self.seq_len] for s in starts]).astype(np.int64)
+        y = np.stack([d[s + 1: s + self.seq_len + 1] for s in starts]).astype(np.int64)
+        return torch.from_numpy(x).to(device, non_blocking=True), torch.from_numpy(y).to(device, non_blocking=True)
+
+    def sequential(self, n: int, device):
+        """Fixed sequential windows (val) so every run evaluates the same tokens."""
+        if not self.data:
+            return None
+        d = self.data[0]
+        T = self.seq_len
+        out_x, out_y = [], []
+        for _ in range(n):
+            if self.pos + T + 1 > len(d):
+                return None
+            out_x.append(d[self.pos: self.pos + T].astype(np.int64))
+            out_y.append(d[self.pos + 1: self.pos + T + 1].astype(np.int64))
+            self.pos += T
+        return (torch.from_numpy(np.stack(out_x)).to(device), torch.from_numpy(np.stack(out_y)).to(device))
+
+
+@torch.no_grad()
+def evaluate(model: GPT, cfg: Config, device, dtype) -> float:
+    model.eval()
+    val = Shards("val", cfg.seq_len, cfg.seed)
+    n_batches = max(1, cfg.eval_tokens // (cfg.micro_batch * cfg.seq_len))
+    losses = []
+    for _ in range(n_batches):
+        batch = val.sequential(cfg.micro_batch, device)
+        if batch is None:
+            break
+        x, y = batch
+        with torch.autocast("cuda", dtype=dtype):
+            _, loss = model(x, y)
+        losses.append(loss.item())
+    model.train()
+    return float(np.mean(losses)) if losses else float("nan")
+
+
+# ======================================================================================
+# Train
+# ======================================================================================
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    for k, v in asdict(Config()).items():
+        ap.add_argument(f"--{k.replace('_', '-')}", type=type(v) if not isinstance(v, bool) else int, default=v)
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--build-only", action="store_true")
+    ap.add_argument("--smoke-steps", type=int, default=0)
+    ap.add_argument("--smoke-seconds", type=float, default=0.0)
+    args = ap.parse_args()
+    cfg = Config(**{k: getattr(args, k) for k in asdict(Config())})
+    cfg.tie_embeddings = bool(cfg.tie_embeddings)
+
+    torch.manual_seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if cfg.dtype == "bfloat16" else torch.float16
+    model = GPT(cfg).to(device)
+    total, nonembed = param_counts(model)
+    report = {"arch": cfg.arch, "seed": cfg.seed, "params_total": total, "params_nonembed": nonembed,
+              "config": asdict(cfg)}
+    print(f"[nano] params total {total/1e6:.2f}M, non-embedding {nonembed/1e6:.2f}M, device {device}", flush=True)
+    out = Path(args.out) if args.out else None
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
+
+    def write(extra: dict) -> None:
+        report.update(extra)
+        if out:
+            (out / "metrics.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+
+    if args.build_only:
+        write({"mode": "build"})
+        print(json.dumps({k: report[k] for k in ("params_total", "params_nonembed")}))
+        return 0
+
+    opts = build_optimizers(model, cfg)
+    train = Shards("train", cfg.seq_len, cfg.seed)
+    accum = max(1, cfg.batch_tokens // (cfg.micro_batch * cfg.seq_len))
+    total_steps = max(1, int(cfg.tokens // cfg.batch_tokens))
+    if args.smoke_steps:
+        total_steps = args.smoke_steps
+    torch.cuda.reset_peak_memory_stats() if device == "cuda" else None
+    t0 = time.time()
+    losses: list[float] = []
+    step = 0
+    model.train()
+    while step < total_steps:
+        m = lr_mult(step, total_steps, cfg)
+        for o in opts:
+            for g in o.param_groups:
+                g["lr"] = (cfg.lr if isinstance(o, Muon) else cfg.lr_adam) * m * cfg.lr_mult_both
+        loss_acc = 0.0
+        for _ in range(accum):
+            x, y = train.sample(cfg.micro_batch, device)
+            with torch.autocast("cuda", dtype=dtype):
+                _, loss = model(x, y)
+            (loss / accum).backward()
+            loss_acc += loss.item() / accum
+        if cfg.grad_clip:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        for o in opts:
+            o.step()
+        model.zero_grad(set_to_none=True)
+        losses.append(loss_acc)
+        step += 1
+        if step % 50 == 0 or step == 1:
+            el = time.time() - t0
+            print(f"[nano] step {step}/{total_steps} loss {loss_acc:.4f} lr x{m:.2f} "
+                  f"{step * cfg.batch_tokens / el / 1e3:.1f}k tok/s", flush=True)
+        if args.smoke_seconds and time.time() - t0 > args.smoke_seconds:
+            break
+    wall = time.time() - t0
+    peak = torch.cuda.max_memory_allocated() / 1e9 if device == "cuda" else 0.0
+    res = {"steps": step, "tokens": step * cfg.batch_tokens, "wall_s": round(wall, 1),
+           "peak_vram_gb": round(peak, 2), "tok_per_s": round(step * cfg.batch_tokens / max(wall, 1e-6)),
+           "loss_first": round(float(np.mean(losses[:5])), 4) if losses else None,
+           "loss_last": round(float(np.mean(losses[-5:])), 4) if losses else None,
+           "loss_curve": [round(float(l), 4) for l in losses]}   # per-step curve: matched-step comparisons
+    if args.smoke_steps or args.smoke_seconds:
+        res["mode"] = "smoke"
+        write(res)
+        print(json.dumps(res))
+        return 0
+    if out:                                   # the harness's exam (nano/exam.py) reads these weights
+        torch.save({"state_dict": model.state_dict(), "config": asdict(cfg)}, out / "model.pt")
+    val_loss = evaluate(model, cfg, device, dtype)   # a self-report; absent when the split is hidden
+    has_val = val_loss == val_loss
+    res.update({"mode": "full", "val_loss": round(val_loss, 4) if has_val else None,
+                "val_bpb": round(val_loss / math.log(2) * 0.2446, 4) if has_val else None})   # tokens/byte ~0.2446 for GPT-2 BPE on English web text (approx)
+    write(res)
+    print(json.dumps(res))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+
+RESEARCH BRIEF for this part (sourced; every line has a URL):
+- KNOWN: TransMLA expressiveness argument (MLA vs GQA at equal KV cache): GQA can always be rewritten as an MLA with the same KV cache size, but MLA cannot always be rewritten as GQA, so MLA is strictly more expressive per cached dimension. Effect: The paper converts GQA models such as Qwen2.5-7B and LLaMA-2-7B to MLA. It reports 93% KV cache compression on LLaMA-2-7B and a 10.6x speedup at 8K context. These are post-training conversions, not from-scratch training with a latent-size sweep. (Qwen2.5-7B and LLaMA-2-7B conversion, 7B scale) https://arxiv.org/pdf/2502.07864
+- KNOWN: Latent MHA for small language models (MLA + RoPE, half-rank latent): MLA with the latent rank set to half the hidden size, with RoPE applied to the decompressed q/k. Effect: Validation loss rose only 0.3% versus MHA with a 45% smaller KV cache. Without RoPE, MLA trailed MHA by 3-5%. With RoPE it beat MHA by about 2%. The half-rank model ran 1.4x faster than full-rank MLA. (30M-parameter GPT on 100k synthetic stories. Treat the evidence as weak (tiny dataset, KDD workshop paper). These figures come from the abstract summary.) https://arxiv.org/html/2506.09342v2
+- KNOWN: Low-Rank Key Value Attention (LRKV): Each layer has one shared full-rank K/V projection, and each head adds a small trainable low-rank residual. This keeps head diversity while sharing most of the KV. Effect: v2 reports the lowest test loss among MHA, MQA/GQA and MLA, using 45-53% of MHA's KV cache. It reaches baseline quality 18-25% faster in steps. Figures differ between v1 and v2, and I did not check them against the full paper. (128M to 6.3B parameters) https://arxiv.org/html/2601.11471v2
+- KNOWN: Grouped-Tied Attention (GTA) and Grouped Latent Attention (GLA): GTA ties key and value into one state per query-head group, using the full tied state as the value. GLA is a latent attention variant that is easier to shard. Effect: GTA matches GQA quality with about half the KV cache. GLA matches MLA quality, and its kernel is up to 2x faster than FlashMLA in decoding. (Tri Dao group, ICML 2025 workshop. Model sizes were not checked.) https://arxiv.org/pdf/2505.21487
+- KNOWN: Tensor Product Attention (TPA): Q, K and V are factorized into input-dependent low-rank tensor-product components. This is natively compatible with RoPE, unlike MLA's extra decoupled RoPE parameters. Effect: The authors report lower validation loss and perplexity than MHA, MQA, GQA and MLA on FineWeb-Edu 100B. I did not confirm exact numbers or the size of the gap. (Pretraining at several sizes on FineWeb-Edu 100B, per secondary summaries) https://arxiv.org/html/2501.06425v6
+- KNOWN: Decoupled RoPE in MLA (shared rotary sub-vector): A single rotary sub-vector is shared across heads, so position information bypasses the latent compression. Effect: In a random-matrix and spectral study, only the decoupled variant avoided early spikes and rank collapse. Applying RoPE before compression (pre-RoPE) did not. This is a preprint analysis, not a downstream quality ablation. (Analysis of MLA variants) https://arxiv.org/html/2507.09394v1
+- KNOWN: Multi-head Temporal Latent Attention (MTLA): Adds compression along the time axis on top of MLA's latent compression. A hyper-network merges temporally adjacent KV vectors, and a stride-aware causal mask keeps training parallel. Effect: On speech translation it gave a 5.3x speedup and 8.3x less GPU memory versus MHA with quality maintained. Results also cover speech recognition and summarisation. (Speech translation, recognition and text summarisation tasks (NeurIPS 2025)) https://arxiv.org/pdf/2505.13544
+- KNOWN: DeepSeek-V4 shared-KV compressed attention (CSA/HCA): Key and value share one vector (2x KV reduction). Token blocks are compressed about 4x (CSA) or about 128x (HCA), with top-k sparse selection and a 128-token sliding window. Effect: At 1M context it needs 27% of V3.2's per-token FLOPs and 10% of its KV cache. These numbers come from secondary summaries, not the primary report. (DeepSeek-V4 Pro (1.6T total, 49B active) and Flash (284B total, 13B active), long context) https://boringbot.substack.com/p/deepseek-v4-architecture-deep-dive
+- DID NOT HELP: MLA without RoPE at small scale: Without RoPE, MLA trailed vanilla MHA by 3-5% in validation loss at 30M parameters. Position handling therefore matters more than latent width when the model is small. https://arxiv.org/html/2506.09342v2
+- DID NOT HELP: Uniform latent rank across layers (CARE paper, MLA conversion): Giving every layer the same rank causes activation drift and worse attention fidelity. Per-layer rank allocation helps. This was shown for converting pretrained models to MLA, not for training from scratch, so transfer is unverified. https://arxiv.org/pdf/2603.17946
+- DID NOT HELP: GQA/MQA-style KV sharing for quality: Sharing KV across heads reduces memory but constrains head-level diversity. Both LRKV and TransMLA position GQA/MQA as quality-losing at matched cache, so sharing is not a free win. https://arxiv.org/html/2601.11471v2
+- OPEN: Per-head low-rank residuals on top of a shared latent KV, so K and V are not tied to one 128-dim bottleneck for all six heads: LRKV's shared-plus-residual design beat MHA, GQA and MLA in loss at 128M and above. Nobody has tested it on top of an MLA-style normed latent, nor at roughly 20M parameters with a 1024 context. https://arxiv.org/html/2601.11471v2
+- OPEN: Per-layer latent rank allocation, trained from scratch: CARE shows uniform rank hurts fidelity when converting pretrained models. Training from scratch with a layer-varying rank (or splitting the latent into separate K and V parts) has not been tested at small scale. https://arxiv.org/pdf/2603.17946
+- OPEN: Tied key-value state (GTA-style, with V equal to the full tied state) instead of separate expansion matrices: GTA reaches GQA quality at half the cache. The cost-for-nothing question here is whether a non-cached, short-context model gains by dropping the 128->768 expansion, or by giving the freed parameters to Q. https://arxiv.org/pdf/2505.21487
+- OPEN: Low-rank, input-dependent factorization of Q as well as K/V (TPA-style), so q and kv share a subspace: TPA claims better loss than MLA, MHA and GQA with RoPE-native factorized Q, K and V. Whether it holds at 21M parameters and 50M tokens is untested. https://arxiv.org/html/2501.06425v6
+- OPEN: Decoupled-RoPE sub-vector shared across heads alongside a normed latent: Spectral analysis suggests the shared rotary path prevents rank collapse and outliers. No ablation checks how RMS-normalising the latent interacts with key/value scale, and my search found nothing on latent normalisation. https://arxiv.org/html/2507.09394v1
+
+HOW THE BASELINE BEHAVES (measured):
+# How the baseline behaves (100 steps, seed 0, measured 2026-10-15T00:58:27)
+
+- At step 100, loss by position: 0-64: 5.964, 64-256: 6.496, 256-1024: 6.423 (late minus early: +0.459 nats).
+- Loss by token frequency: rank 0-100: 3.163 (42% of tokens), rank 100-1000: 6.829 (21% of tokens), rank 1000-10000: 8.979 (26% of tokens), rank 10000-50304: 11.613 (12% of tokens); rarest minus most frequent: +8.450 nats.
+- Gradient norms by layer (attention): first 0.2406, last 0.0288, min at layer 2, max at layer 0; (MLP): first 0.1992, last 0.0508.
+- Attention entropy (1 = flat): layer values [0.957, 0.903, 0.854, 0.804, 0.771, 0.78, 0.698, 0.704, 0.705, 0.667, 0.711, 0.763]; lowest at layer 9 (0.667), highest at layer 0 (0.957).
+- Residual stream RMS after each block: first 1.403, last 10.893 (growth x7.8).
+- Probe loss fell from 10.8897 at step 0 to 6.4081 at step 100; the per-10-step improvement halved after step 10.
+- Recall tokens (bigram already seen in the window, 13% of targets): loss 4.475 against 6.704 for the rest.
+- Max attention logit by layer: [7.81, 15.5, 13.5, 18.12, 15.5, 16.0, 17.38, 19.75, 22.75, 20.12, 20.88, 16.62] (largest at layer 8); first-token attention mass: [0.0056, 0.0059, 0.0041, 0.0049, 0.0037, 0.0036, 0.0034, 0.0033, 0.0031, 0.0023, 0.0034, 0.0031].
+- Update size per step (||dw||/||w||): median 0.02009, max 0.03265 (spread x2).
+
+| layer | grad norm attn | grad norm mlp | output RMS | attention entropy |
+|---|---|---|---|---|
+| 0 | 0.2406 | 0.1992 | 1.403 | 0.957 |
+| 1 | 0.0236 | 0.1156 | 2.707 | 0.903 |
+| 2 | 0.0195 | 0.0895 | 3.985 | 0.854 |
+| 3 | 0.0222 | 0.0643 | 4.953 | 0.804 |
+| 4 | 0.021 | 0.0557 | 5.855 | 0.771 |
+| 5 | 0.0221 | 0.0484 | 6.659 | 0.78 |
+| 6 | 0.0276 | 0.0453 | 7.42 | 0.698 |
+| 7 | 0.0327 | 0.039 | 8.094 | 0.704 |
+| 8 | 0.0339 | 0.0407 | 8.758 | 0.705 |
+| 9 | 0.0338 | 0.0437 | 9.452 | 0.667 |
+| 10 | 0.0295 | 0.0413 | 10.074 | 0.711 |
+| 11 | 0.0288 | 0.0508 | 10.893 | 0.763 |
+
+loss curve: step 1: 10.8805, step 26: 7.0622, step 51: 6.5902, step 76: 6.4182, step 100: 6.1789
+
+
+ANOMALIES (replicated on several seeds):
+- grad attn in layer 0: 0.2908 is 0.2516 above what its two neighbours predict (extrapolated at the end of the range) (z 7.03, same sign on 3 seeds) [cell: grad]
+- grad mlp in layer 0: 0.2293 is 0.0718 above what its two neighbours predict (extrapolated at the end of the range) (z 5.78, same sign on 3 seeds) [cell: grad]
+- grad attn in layer 2: 0.0259 is 0.0039 below what its two neighbours predict (z -3.61, same sign on 3 seeds) [cell: grad]
+
+THE IDEA:
+IDEA: Gated nonlinear latent
+MECHANISM: Add a 384 to 128 gate projection and set the latent to norm(W_c x times silu(W_g x)), so the KV code can select features conditionally on the token rather than being a fixed linear image of it. The whole K/V path is currently linear up to norms, which wastes the latent on features that only matter in combination.
+PREDICTION: Parameters rise by 49k per layer, about 0.59M total, within the cap; step time up by under 3 percent; loss lower by 0.01 nats or more, with the largest gap on rare tokens whose K/V need context-dependent coding.
+TEST: Build-only parameter count, 3-step peak VRAM check since the gate adds a 128-wide activation per token, then a 45-step matched smoke run.
+TARGET: loss on rare tokens, down
+KIND: leap (an ambitious idea: build it faithfully, do not water it down into a known technique)
+BREAKS: Keys and values are linear functions of the normed residual read.
+KEEPS: 128-dim latent shared by K and V and by all heads, latent RMSNorm before expansion, separate q path, rotary path from x.
+KILL: Mean loss over steps 40 to 45 not below the baseline's by at least 0.01 nats, or peak VRAM above 5.55 GB.
+VARIANTS OF THE SAME IDEA FROM OTHER CONTEXTS (choose the version you judge most likely to work):
+- Gated nonlinear expansion: Linearity of expand is inherited from the inference recipe, but here the 128-d latent is a true bottleneck that six heads must share. Make the expansion a gated map, expand(c) times silu(gate(c)), so keys and values become a two-layer function of the latent and the six heads can carve different nonlinear views from the same 128 channels.
+
+Ask yourself as many questions as it takes to cover EVERY aspect of it (at least 6, no upper limit): the exact mechanism in terms of the script above, how it interacts with each other part of the recipe, compute, memory and step time, parameters and initialisation, what it silently assumes, how it could fail or do nothing, and what is already known about it. First write the chain of links from the change to the loss, each with what would refute it; then the questions, aimed at the weakest links; answer each. Then list what the builder must know, what the idea assumes, the new ideas that came up while answering, and the questions you could not answer.
+
+Use exactly this form:
+CHAIN (the causal path from the change to the loss, 3 to 6 links, one per line; this is what gets tested, so write what could be measured; directions and bands, never point estimates):
+L1: <cause> -> <effect> | quantity: <the measured cell or quantity this link moves> | baseline: <its value in the measurements above, or "unmeasured"> | expect: <direction and rough band> | breaks if: <the observation that would refute this link>
+L2: ...
+WEAKEST: <the link id you are least sure of>
+
+QUESTIONS, aimed at the weakest links first. Ask only questions whose answer would change how the idea is built, and say which two build choices each one decides:
+Q1: <question> | decides: <choice A vs choice B>
+A1: <answer, one to three sentences, facts not hopes; write "unknown" when you do not know; put the URL in the answer when a fact comes from the web>
+Q2: ...
+A2: ...
+(as many pairs as needed, at least 6)
+
+KNOWN:
+- <one fact per line that whoever builds this must know: sizes, orderings, where it plugs in, what to initialise, what to watch; a fact with a number must end with its source URL> [script|measured|web|belief]
+(tag every fact with where it comes from: script = read from the script above; measured = from the measurements above; web = from a page, with its URL; belief = your own reasoning, not yet checked)
+
+ASSUMES:
+- <one line per thing this idea silently takes for granted (a design choice a different idea could drop)>
+
+NEW IDEAS (4 to 6, each in this block form, blank line between blocks, one per slot in this order: DROP one of the ASSUMES lines and build what follows; STRENGTHEN the mechanism; SPECIALISE it to fewer layers, one token class or one phase of training; PORT it to another part, naming the part; COMBINE it with a named known technique; and at least one must be a leap. Each must differ in mechanism from the idea under interrogation):
+SLOT: <drop|strengthen|specialise|port|combine|other>
+IDEA: <short name>
+MECHANISM: <one or two sentences>
+PREDICTION: <the observable effect>
+TEST: <the cheapest falsifying check>
+SOURCE: <"own" or a URL>
+PART: <the part of the map this idea belongs to, by its name: the part under interrogation unless the idea is for another part>
+KIND: <"port" or "leap"; at least one of the new ideas must be a leap: it drops or flips a rule the recipe takes for granted, keeps the rest, and might fail>
+BREAKS: <leaps only: the rule it drops or flips>
+KILL: <leaps only: the number at the first learning check that discards it>
+
+OPEN:
+- <one unanswered question per line> | build: <yes if the answer would change how this is built, else no> | decides: <the two build choices it would separate>

@@ -1,0 +1,105 @@
+{
+ "call_id": "c3fb84710f1",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Slow EMA AGC on MLP write\", \"members\": [\"s648165d2fc\", \"scd0c7327b7\"]},\n  {\"name\": \"Relative (stream-ratio) AGC\", \"members\": [\"s92664facb8\", \"sc451c4f7ee\"]},\n  {\"name\": \"Warmup-only AGC then freeze/fold\", \"members\": [\"s5b0cbe54a5\", \"s2f1e61759d\", \"sd9b30a8d6b\"]},\n  {\"name\": \"AGC on attention write\", \"members\": [\"s912b21b5a6\", \"s13296a9883\"]},\n  {\"name\": \"Fixed-norm matrix projection with scalar magnitude\", \"members\": [\"s18916319a9\", \"sbda52275bc\", \"s053864ee3c\"]},\n  {\"name\": \"Per-channel envelope compressor\", \"members\": [\"s58d8a01d0d\"]},\n  {\"name\": \"Embedding envelope control\", \"members\": [\"s04e31b5178\"]},\n  {\"name\": \"Spectral-compensated gain\", \"members\": [\"sc38f8d27e0\"]},\n  {\"name\": \"Degree-matched SwiGLU\", \"members\": [\"s197be56886\"]},\n  {\"name\": \"Uncapped exponential write weights\", \"members\": [\"s83fecfeedc\"]},\n  {\"name\": \"Write-clip (MuonClip on residual writes)\", \"members\": [\"sf5edbe5fb8\"]},\n  {\"name\": \"Peri-LN output norm\", \"members\": [\"sdc92fb81ac\"]},\n  {\"name\": \"Divisive normalization pools\", \"members\": [\"s4ae37d2a67\"]},\n  {\"name\": \"Homeostatic gate offsets\", \"members\": [\"s8890a9bf42\"]},\n  {\"name\": \"Mixed activation populations\", \"members\": [\"sb2ca7b905f\"]},\n  {\"name\": \"Reverse width allocation\", \"members\": [\"s5fbca7c400\"]},\n  {\"name\": \"Token-shifted value path\", \"members\": [\"s57726b8ae7\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 1349,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 3785,
+  "total_tokens": 6704
+ },
+ "cost_usd": 0.034905,
+ "duration_ms": 10347,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 6704,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: mlp_swiglu/outward, 24 sketches"
+ },
+ "prompt_chars": 8669,
+ "raw": {
+  "duration_api_ms": 8966,
+  "stop_reason": "end_turn",
+  "session_id": "b13787a3-34f9-4679-b2b6-9e6621d43520",
+  "total_cost_usd": 0.0287908,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 3785,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 1349,
+   "output_tokens_details": {
+    "thinking_tokens": 669
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 3785,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1349,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 3785,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 3785
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 1349,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 3785,
+    "webSearchRequests": 0,
+    "costUSD": 0.0287908,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 669,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 9034,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 1349,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3785,
+    "total_tokens": 6704
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 1349,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 3785,
+    "total_tokens": 6704
+   },
+   "source": "usage"
+  }
+ }
+}

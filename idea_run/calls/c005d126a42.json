@@ -1,0 +1,105 @@
+{
+ "call_id": "c005d126a42",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Learned sink key\", \"members\": [\"sf1944d1c91\"]},\n  {\"name\": \"Causal lag/tap mixing on keys and values or latent\", \"members\": [\"s74de4f18fc\", \"sc12466a2ad\", \"s30726e7798\", \"s4174743845\", \"sce521b3b1a\"]},\n  {\"name\": \"Head count/width geometry\", \"members\": [\"s291d507e0f\", \"s3a7b5fa18c\"]},\n  {\"name\": \"Unary key salience bias\", \"members\": [\"scf5d413e2e\"]},\n  {\"name\": \"Query-norm gain scheduling\", \"members\": [\"sadd597a5c0\"]},\n  {\"name\": \"Value rotary heterodyning\", \"members\": [\"s4fc1b0b612\"]},\n  {\"name\": \"Shared softmax across head pairs\", \"members\": [\"s73a6a59cf6\"]},\n  {\"name\": \"Shared wo with decoupled head width\", \"members\": [\"sc8c0324288\"]},\n  {\"name\": \"Self-excluded attention mask\", \"members\": [\"s03b519b4c9\"]},\n  {\"name\": \"Static per-head or global score scale\", \"members\": [\"s8e4ef89f6a\", \"s0bf5af4913\"]},\n  {\"name\": \"Length-scaled softmax (SSMax)\", \"members\": [\"s1eedcccf81\"]},\n  {\"name\": \"Conv on MLP input\", \"members\": [\"sfb757e6226\"]},\n  {\"name\": \"Per-head output gate\", \"members\": [\"s2da7836045\"]},\n  {\"name\": \"Replace layer-0 attention with conv mixer\", \"members\": [\"s99bc12e1f0\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 1717,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 4218,
+  "total_tokens": 7505
+ },
+ "cost_usd": 0.042049,
+ "duration_ms": 15019,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 7505,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_heads_outpu/inward, 20 sketches"
+ },
+ "prompt_chars": 10029,
+ "raw": {
+  "duration_api_ms": 13643,
+  "stop_reason": "end_turn",
+  "session_id": "6e02b648-9185-402b-9f2e-453b7bb3b74a",
+  "total_cost_usd": 0.034202800000000005,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 4218,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 1717,
+   "output_tokens_details": {
+    "thinking_tokens": 1163
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 4218,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 1717,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 4218,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 4218
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 1717,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 4218,
+    "webSearchRequests": 0,
+    "costUSD": 0.034202800000000005,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 1163,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 13712,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 1717,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 4218,
+    "total_tokens": 7505
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 1717,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 4218,
+    "total_tokens": 7505
+   },
+   "source": "usage"
+  }
+ }
+}

@@ -1,0 +1,105 @@
+{
+ "call_id": "c14f7c54804",
+ "role": "judge",
+ "backend": "cli_json",
+ "model": "sonnet",
+ "text": "```json\n[\n  {\"name\": \"Rescaled RoPE frequency spectrum (theta 480, learned log-freq)\", \"members\": [\"sf89e2085ed\"]},\n  {\"name\": \"Decay-proof per-head log-temperature and exp-gains\", \"members\": [\"s15cb6324c5\"]},\n  {\"name\": \"RoPE on content dims, delete decoupled rotary key\", \"members\": [\"s426e95758a\"]},\n  {\"name\": \"Offset-aware rotated values with inverse output rotation\", \"members\": [\"s0f57ec4870\"]},\n  {\"name\": \"No self-key plus learned null key\", \"members\": [\"sa2949bfdd8\"]},\n  {\"name\": \"Post-SDPA sigmoid output gate\", \"members\": [\"s3a1b2a6077\"]},\n  {\"name\": \"Per-head rotary keys instead of shared key\", \"members\": [\"s403cc5e2b9\"]}\n]\n```",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 587,
+  "cache_read_input_tokens": 1568,
+  "cache_creation_input_tokens": 2129,
+  "total_tokens": 4286
+ },
+ "cost_usd": 0.017265,
+ "duration_ms": 7335,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 2500,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 4286,
+ "over_cap": false,
+ "meta": {
+  "card": "cluster",
+  "note": "blind clustering: attn_rope_norm/outward, 7 sketches"
+ },
+ "prompt_chars": 4164,
+ "raw": {
+  "duration_api_ms": 5944,
+  "stop_reason": "end_turn",
+  "session_id": "daa88109-a944-4e48-ba1a-c502462d21b8",
+  "total_cost_usd": 0.014546799999999999,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 2129,
+   "cache_read_input_tokens": 1568,
+   "output_tokens": 587,
+   "output_tokens_details": {
+    "thinking_tokens": 282
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 2129,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 587,
+     "cache_read_input_tokens": 1568,
+     "cache_creation_input_tokens": 2129,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 2129
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-sonnet-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 587,
+    "cacheReadInputTokens": 1568,
+    "cacheCreationInputTokens": 2129,
+    "webSearchRequests": 0,
+    "costUSD": 0.014546799999999999,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 282,
+    "canonicalModel": "claude-sonnet-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 6006,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 587,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2129,
+    "total_tokens": 4286
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 587,
+    "cache_read_input_tokens": 1568,
+    "cache_creation_input_tokens": 2129,
+    "total_tokens": 4286
+   },
+   "source": "usage"
+  }
+ }
+}

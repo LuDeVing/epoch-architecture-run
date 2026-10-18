@@ -1,0 +1,110 @@
+{
+ "call_id": "c918ca222b0",
+ "role": "generate",
+ "backend": "cli_json",
+ "model": "opus",
+ "text": "**Interrogation: rotary values with un-rotated readout**\n\nCHAIN (the causal path from the change to the loss, 3 to 6 links, one per line; this is what gets tested, so write what could be measured; directions and bands, never point estimates):\n\nL1: Rotate v[..., rotated slice] by R(ω·j) before SDPA, and rotate the same slice of the SDPA output by R(−ω·i) before `wo` -> each head's rotated slice of the output equals Σ_j a_ij R(ω(j−i)) v_j | quantity: unit check with forced one-hot attention at offset δ: the output should equal R(ωδ)v_j, and at δ=0 it should equal v exactly | baseline: n/a (identity today) | expect: max abs error under 2e-2 relative in bf16, and exactly 0 for the unrotated slice | breaks if: the error exceeds 5e-2 at T=1024, or the δ=0 output is not v (sign or pairing bug)\n\nL2: For diffuse heads, the rotated slice cancels: Σ a_ij e^{iω(j−i)} shrinks for fast ω, so content in those dims is lost while offset information appears | quantity: per-layer ratio RMS(rotated slice of y) / RMS(unrotated slice of y) | baseline: unmeasured (≈1 by symmetry today) | expect: 0.2–0.7 in layers 0–2 (entropy 0.85–0.96), 0.6–1.0 in layers 6–10 (entropy 0.67–0.71) | breaks if: the ratio is ≥0.95 in layer 0, which would mean no cancellation (and no offset signal) or a bug; or ≤0.3 in layers 6–11, which would mean the payload is destroyed where it was supposed to help\n\nL3: The offset phase reaches the residual stream in a usable form -> a downstream probe can read the attended offset | quantity: linear probe from the block output to the argmax-attention offset (log-binned) | baseline: unmeasured | expect: probe accuracy up over baseline in layers ≥4, by any clear margin | breaks if: the probe is no better than baseline (the phase is entangled with content and `wo`/MLP can't decode it)\n\nL4: Offset-aware reads help copying -> recall-token loss drops | quantity: recall-token loss (bigram already seen in window, 13% of targets) | baseline: 4.475 at step 100 | expect: down 0.02–0.10 at step 100 (the idea's 4.30 target, −0.175, is optimistic) | breaks if: the change is within seed noise, or recall loss rises\n\nL5: The cost of L2 stays small elsewhere -> non-recall loss is unchanged | quantity: non-recall loss | baseline: 6.704 at step 100 | expect: within ±0.02 | breaks if: it rises more than 0.02 (lost value capacity outweighs offset info)\n\nL6: Net effect at the full budget | quantity: exam val loss at 50M tokens | baseline: pooled baseline mean (not in brief) | expect: −0.015 to +0.01 | breaks if: not below baseline by >0.005 at p<0.01 over 3 seeds\n\nWEAKEST: L4\n\nQUESTIONS, aimed at the weakest links first:\n\nQ1: Does next-token prediction on recall tokens actually need the copy offset, or is it already implicit in which head did the copying? | decides: rotate every layer vs only layers whose heads attend at variable offsets (≥ mid-depth)\nA1: In the standard induction circuit, the previous-token head always attends at offset 1, so its offset is implied by the head's identity. The induction head's prediction (the token after the earlier match) does not depend on how far back the match was. So the offset is mostly redundant for plain recall, and L4's gain probably comes from variable-offset heads, if it comes at all. This is a belief; it is unmeasured here.\n\nQ2: Which frequencies should rotate the value: all 16 of the existing cache (32 dims) or a band? | decides: 32 dims with `cos, sin` as-is vs 16 dims using `cos[:, 3:11]`, `sin[:, 3:11]`\nA2: `rope_cache(T, 32, 10000)` gives wavelengths 2π·10000^(k/16) for k = 0..15, from 6.3 up to about 35,300 tokens.\n- For k ≥ 13, the angle over the whole 1023-token window is under 0.6 rad, so those dims carry almost no offset information.\n- For k ≤ 2 (wavelengths 6–20), the phase aliases, and these dims cancel hardest under diffuse attention.\n- k = 3..10 covers wavelengths of about 35–1990 tokens, which is the \"32 to 2048\" range the first variant actually states.\n\nNote that variant's label is wrong: its \"longest 8 wavelengths\" would be k = 8..15, not 32–2048. I recommend the 16-dim band k = 3..10. It keeps 48 of 64 value dims clean and spends the rotated dims where offsets in 1–1023 are distinguishable.\n\nQ3: How bad is the content loss from cancellation in the shallow, near-uniform layers? | decides: apply in all 12 layers vs skip layers 0–2\nA3: With near-uniform attention over n tokens, |Σ a_ij e^{iωδ}| ≈ |sin(ωn/2)| / (n·sin(ω/2)), which is far below 1 except for the slowest ω. Layer 0 has entropy 0.957, so its rotated slice will carry close to zero content. Its attention gradient norm is already anomalous (0.24 against about 0.02 in its neighbours, z = 7 over 3 seeds), so perturbing layer 0's value path is the riskiest place. That last point is a belief.\n\nQ4: Is the inverse rotation exactly what `apply_rope` can do, and is the pairing right? | decides: reuse `apply_rope(y, cos, -sin)` vs write a new helper\nA4: `apply_rope` pairs dim i with dim i+D/2 inside the tensor it is given, and slices `cos[:T]`. So these calls give the exact inverse at query position i:\n- `apply_rope(v[..., :32], cos, sin)` for the forward rotation\n- `apply_rope(y[..., :32], cos, -sin)` for the inverse\n\nFor the 16-dim band, call it on a 16-dim slice with `cos[:, 3:11]` and `sin[:, 3:11]` (8 pairs). Apply it to `y` while `y` is still (B, H, T, 64), before the transpose. This is read from the script.\n\nQ5: Can `wo` (linear) and the MLP actually decode offset from R(ωδ)v_j? | decides: rotate content only (the idea as written) vs also add a constant carrier pair whose rotated output is a pure offset spectrum\nA5: The output is bilinear in content and offset. A linear readout recovers the offset only along directions where v_j is consistent across tokens. Values have no bias, and latent RMSNorm does not guarantee such a direction, so decoding depends on the downstream SwiGLU. This is unknown empirically; the build stays faithful (content rotation only), and the carrier version is listed below as a separate idea.\n\nQ6: Is a 45-step kill check long enough to see a recall effect, and is 0.03 nats above seed noise? | decides: kill at 45 steps vs extend the check to 100 steps (or a 10M-token mid-run)\nA6: Unknown. 45 steps is about 1.47M tokens. Much of the 2.2-nat recall advantage at step 100 is likely repeated-bigram frequency rather than induction, and whether induction heads have formed by 1.5M tokens at 21M params is unmeasured. The seed-to-seed spread of recall loss is not in the brief. Measure it on 3 baseline seeds before using 0.03 as a kill threshold.\n\nQ7: What do step time and memory cost? | decides: inline slicing and `torch.cat` vs in-place slice assignment to avoid copies\nA7: The extra work is two elementwise rotations per layer on tensors of (4, 6, 1024, ≤32), which is negligible next to the attention and MLP matmuls. Saved activations add roughly 3 MB per layer at bf16, about 40 MB total, well under the 5.6 GB cap. +1% step time is plausible. Use `torch.cat` rather than in-place writes so autograd stays simple. This is a belief from the arithmetic.\n\nQ8: Is there prior evidence for rotating values and un-rotating outputs? | decides: build as a leap vs deprioritize\nA8: Not from the brief, and none of its sources tests it. My recollection is that Su Jianlin's blog discussed \"VO-RoPE\" (rotating V and O) in 2025 without a clear LM gain, but I could not verify a URL, so treat this as unverified.\n\nQ9: Does the change survive the harness exam, which builds `GPT(cfg)` from the saved config? | decides: new `Config` fields (`v_rope_dims`, band) vs hardcoded constants in `Attention`\nA9: No parameters or buffers are added, so `model.pt`'s `state_dict` is unchanged. A new `Config` field is only safe if the exam rebuilds `Config` from this file. Hardcode the constants in `Attention`, as `rd = 32` already is.\n\nQ10: Should value phases be per-head, given the rotary key is shared across heads? | decides: one shared cos/sin for all heads vs per-head frequency offsets\nA10: The script uses one cache for all heads, so all heads share the value frequencies, and heads differ only through their attention patterns. Per-head frequencies are a separate idea (STRENGTHEN below), not part of the faithful build. This is from the script.\n\nKNOWN:\n- Head dims: content q/k 64, rotary 32 (shared key `kr` broadcast to 6 heads), v 64; SDPA scale is the default 1/sqrt(96) because q/k are 96-wide [script]\n- `v` is the second half of each head's 128-wide slice of `expand(latent_norm(compress(x)))`; the rotated slice is `v[..., :32]` (or a 16-dim band) taken before SDPA [script]\n- `cos`/`sin` come from `rope_cache(T, 32, theta)` with shape (T, 16) and are built once in `GPT.forward`; reuse them, with no new buffers [script]\n- The inverse rotation is `apply_rope(y_slice, cos, -sin)` applied to `y` in (B, H, T, 64) layout before `transpose(1, 2)` and `wo` [script]\n- Wavelengths of the 16 frequencies run from 2π to 2π·10000^(15/16) ≈ 35,300 tokens; k = 3..10 spans about 35–1990 tokens [script]\n- Attention entropy by layer runs from 0.957 (layer 0) to 0.667 (layer 9); diffuse layers will cancel the rotated content [measured]\n- Recall tokens are 13% of targets, with loss 4.475 against 6.704 for the rest at step 100 [measured]\n- Layer-0 attention gradient is anomalously large (0.29 against a neighbour-predicted ~0.04, 3 seeds); watch it after the change [measured]\n- No new parameters and no init changes; Muon/AdamW grouping is unaffected [script]\n- The sliding-window branch is unaffected; the rotation sits outside SDPA, so both branches need it [script]\n- Seed noise on recall-token loss is unmeasured; get it before trusting a 0.03 threshold [belief]\n\nASSUMES:\n- Knowing the offset of the attended token improves next-token prediction beyond what head identity already implies.\n- The phase of a rotated content vector is decodable by `wo` plus the downstream MLP without a dedicated carrier.\n- The fixed geometric theta=10000 frequencies of the key path are also the right ones for the value path.\n- Losing content in the rotated dims of diffuse heads costs less than the offset information gains.\n- Every layer should get the same treatment.\n- Values come from the shared MLA latent, so any value-side positional signal must be injected after `expand`.\n\nNEW IDEAS:\n\nSLOT: drop\nIDEA: Offset-spectrum carrier channels\nMECHANISM: Append 8 constant (1, 0) pairs to each head's value, rotate them at the key position over band k = 3..10, and derotate at the query position. The output is then the head's attention offset spectrum Σ a_ij e^{iω(j−i)}, cleanly separated from content. `wo` input grows 384 → 480 (+0.44M, +2%).\nPREDICTION: Recall-token loss down ≥0.02 at step 100 with non-recall loss unchanged, since the content dims are untouched.\nTEST: 100-step matched smoke on 3 seeds with recall and non-recall losses split.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: leap\nBREAKS: the attention output contains only weighted content projections of the attended tokens\nKILL: at 45 matched steps, total loss above baseline, or recall loss not ≥0.02 below baseline\n\nSLOT: strengthen\nIDEA: Per-head learned value frequencies\nMECHANISM: Replace the fixed band with 8 learnable log-frequencies per head (48 scalars per layer, AdamW), initialised at k = 3..10. Each head tunes its value phase to the offsets it actually attends.\nPREDICTION: Learned frequencies separate by depth (shallow heads slower, induction heads at offsets they use); recall loss beats the fixed-band version.\nTEST: Compare against the fixed band at 100 steps and log the frequency drift.\nSOURCE: https://arxiv.org/abs/2607.10134\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: specialise\nIDEA: Value rotation only in layers 6–11\nMECHANISM: Apply the rotate/derotate only where attention entropy is ≤0.76 and induction-like heads live. Layers 0–5, including the anomalous layer 0, keep plain values.\nPREDICTION: Same recall gain as all-layer, with no non-recall cost, because the shallow diffuse layers lose no content.\nTEST: Matched 100-step smoke against the all-layer version.\nSOURCE: own\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nSLOT: port\nIDEA: Decoupled rotary value (MLA-side mirror of the shared rotary key)\nMECHANISM: Add one 384×32 projection shared across heads (like `self.rotary`) producing a rotary value. Rotate it at j, attend it with each head's weights, derotate at i, and concatenate it to each head's 64 content dims before a widened `wo` (+~1.1M, +5%). The latent-derived values stay untouched.\nPREDICTION: Offset signal without losing any content dims; non-recall loss is no worse than baseline.\nTEST: Build-only param check under 23.36M, then a 100-step smoke.\nSOURCE: own\nPART: Latent KV compression (MLA)\nKIND: port\n\nSLOT: combine\nIDEA: Rotary values plus a per-head sigmoid output gate on each half\nMECHANISM: After derotation, multiply the rotated and unrotated halves of each head's output by separate query-dependent sigmoid gates. Diffuse heads can then shut off their cancelled rotated half, and sharp heads can use it.\nPREDICTION: Learned gates on the rotated half are low in layers 0–2 and high in late layers; total loss at or below the ungated version.\nTEST: 100-step smoke, logging mean gate values per layer.\nSOURCE: https://proceedings.neurips.cc/paper_files/paper/2025/hash/904e89bb4e632e75fb47f093b620b257-Abstract-Conference.html\nPART: Sequence mixing: decoupled rotary dims and QK-norm\nKIND: port\n\nOPEN:\n- What is the seed-to-seed std of recall-token loss at steps 45 and 100? | build: no | decides: kill threshold 0.03 vs a noise-derived threshold\n- Have induction heads formed by 1.5M or 3.3M tokens at this scale? | build: yes | decides: kill check at 45 steps vs 100 steps or mid-run\n- Does `wo` plus SwiGLU decode phase from rotated content, or does it need a carrier? | build: yes | decides: content rotation only vs adding a carrier pair\n- Is the full 32-dim/16-frequency version better or worse than the k = 3..10 band? | build: yes | decides: 32 rotated dims vs 16\n- Does the exam rebuild `Config` from this file or from its own copy? | build: yes | decides: new `Config` fields vs hardcoded constants\n- Is there a published LM ablation of rotating V and O (VO-RoPE), and what did it find? | build: no | decides: run as a leap vs deprioritize\n- Does damping layer 0's value content reduce or worsen its gradient anomaly? | build: yes | decides: include layer 0 vs exclude it",
+ "usage": {
+  "input_tokens": 2,
+  "output_tokens": 14434,
+  "cache_read_input_tokens": 649,
+  "cache_creation_input_tokens": 17009,
+  "total_tokens": 32094
+ },
+ "cost_usd": 1.402472,
+ "duration_ms": 155130,
+ "stop_reason": "end_turn",
+ "error": null,
+ "attempts": 1,
+ "raw_path": null,
+ "max_tokens": 6000,
+ "usage_estimated": false,
+ "attempt_errors": [],
+ "total_tokens": 32094,
+ "over_cap": true,
+ "meta": {
+  "card": "deepen",
+  "operator": "attn_rope_norm-in-k08",
+  "seed": "",
+  "note": "interrogating 'Rotary values with un-rotated readout' gen 0 depth 0",
+  "node": "attn_rope_norm",
+  "depth": 0,
+  "gen": 0
+ },
+ "prompt_chars": 37054,
+ "raw": {
+  "duration_api_ms": 153356,
+  "stop_reason": "end_turn",
+  "session_id": "e684ea47-b36a-421c-a068-b2d366ac3f80",
+  "total_cost_usd": 0.4248898,
+  "usage": {
+   "input_tokens": 2,
+   "cache_creation_input_tokens": 17009,
+   "cache_read_input_tokens": 649,
+   "output_tokens": 14434,
+   "output_tokens_details": {
+    "thinking_tokens": 8574
+   },
+   "server_tool_use": {
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+   },
+   "service_tier": "standard",
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 17009,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "inference_geo": "global",
+   "iterations": [
+    {
+     "input_tokens": 2,
+     "output_tokens": 14434,
+     "cache_read_input_tokens": 649,
+     "cache_creation_input_tokens": 17009,
+     "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 17009
+     },
+     "type": "message"
+    }
+   ],
+   "speed": "standard",
+   "fallback_credit": null
+  },
+  "modelUsage": {
+   "claude-opus-5-5": {
+    "inputTokens": 2,
+    "outputTokens": 14434,
+    "cacheReadInputTokens": 649,
+    "cacheCreationInputTokens": 17009,
+    "webSearchRequests": 0,
+    "costUSD": 0.4248898,
+    "contextWindow": 1000000,
+    "maxOutputTokens": 128000,
+    "thinkingTokens": 8574,
+    "canonicalModel": "claude-opus-5-5",
+    "provider": "firstParty",
+    "costBasis": "list"
+   }
+  },
+  "num_turns": 1,
+  "duration_ms": 153516,
+  "_usage_info": {
+   "usage": {
+    "input_tokens": 2,
+    "output_tokens": 14434,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 17009,
+    "total_tokens": 32094
+   },
+   "model_usage_sum": {
+    "input_tokens": 2,
+    "output_tokens": 14434,
+    "cache_read_input_tokens": 649,
+    "cache_creation_input_tokens": 17009,
+    "total_tokens": 32094
+   },
+   "source": "usage"
+  }
+ }
+}

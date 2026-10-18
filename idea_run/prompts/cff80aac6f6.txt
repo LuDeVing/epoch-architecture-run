@@ -1,0 +1,549 @@
+Interrogate ONE idea before anyone builds it. The idea belongs to this part of the recipe: Sequence mixing: head count, head structure and output proje. Current design of that part: Six heads of 64 content dims with full multi-head (n_kv_head equals n_head) causal attention over 1024 tokens; head outputs are concatenated and projected by wo, initialized at std 0.02/sqrt(24).
+
+CONSTRAINTS:
+- C1. Same data: the FineWeb-Edu shards in D:/AGI-lab/data/fineweb, loaded through the Shards class as in the baseline.
+- C2. Same token budget: --tokens 50e6. The exam is run by the harness on the weights the script saves (model.pt): 2M validation tokens in fixed 1024-token windows, plain next-token cross entropy from GPT(cfg).forward(idx) logits. The script never sees val.bin; evaluate() stays as it is and is only a self-report.
+- C3. Non-embedding parameter count at most 10 percent above the baseline (21.24M); fewer parameters are always allowed.
+- C4. Peak VRAM under 5.6 GB and step time at most 2x the baseline on an RTX 4050 (6 GB).
+- C5. The file keeps the same command-line interface and still writes metrics.json with val_loss; --build-only, --smoke-steps and --smoke-seconds must keep working.
+- C6. No dependencies beyond torch, numpy and the plain standard library; socket, urllib, http, subprocess, ctypes, multiprocessing, importlib, pickle and shutil are denied; no network; no subprocesses; no reference to the validation split anywhere in training code. The process runs under a tripwire that fails the candidate on any of these.
+- C7. The metric is the exam's validation loss after the fixed budget; a change counts only if it beats the pooled baseline mean by more than 0.005 nats with a one-sided Welch test at p < 0.01 over at least 3 seeds.
+
+THE CURRENT SCRIPT (the idea will be built into this file):
+```python
+# IDEA: strongest open model, dense skeleton scaled to 21M
+# BASED ON: DeepSeek-V4 config https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro/raw/main/config.json; Kimi-K3 config https://huggingface.co/moonshotai/Kimi-K3/raw/main/config.json
+# EXCLUDED: MoE, sparse/compressed long-context attention, prediction extras and vision: size/context constraints; Kimi KDA and attention residuals: follow DeepSeek
+# FIDELITY: partial, user-specified MLA substitutes V4 token compression; d=384, layers=12, heads=6, content=64, latent=128, rotary=32, context=1024, FFN=1077, tied head; static 4-stream Sinkhorn mixing substitutes dynamic mHC; QK RMSNorm, asymmetric stream write start and baseline residual initialization are local choices; theta=10000, epsilon=1e-6, stream count=4 and Sinkhorn=20 sourced from V4 config
+"""nano trainer: a small, readable language-model training script that the HTSA loop proposes
+changes against. Fixed token budget, fixed data, fixed evaluation; everything else is fair game.
+
+Baseline architecture (research_notes/architectures/nano_specs.md, section A, "nano-GPT2"):
+pre-norm Transformer, RMSNorm, rotary positions, SwiGLU MLP, no biases, tied embeddings,
+d=384, 12 layers, 6 heads x 64. Optimizer: Muon for 2-D weights, AdamW for the rest.
+
+Modes (the verifier in nano/check.py uses them as rungs):
+  --build-only            construct the model, print parameter counts, exit
+  --smoke-steps N         run N optimizer steps on real data, report step time and peak memory
+  --smoke-seconds S       train for S seconds, report whether loss fell
+  (default)               train for --tokens tokens, evaluate, write metrics.json
+
+Outputs metrics.json in --out: {val_loss, val_bpb, params_total, params_nonembed, tokens,
+steps, wall_s, peak_vram_gb, loss_first, loss_last, loss_curve, arch, seed} and, after a full run,
+model.pt (weights + config) for the harness's own exam (nano/exam.py). The data folder comes from
+HTSA_DATA_DIR; under the harness it holds the train shards only, so val_loss is None there.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import time
+from dataclasses import dataclass, asdict
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+DATA_DIR = Path(os.environ.get("HTSA_DATA_DIR") or (Path(os.environ.get("HTSA_LAB_ROOT", r"D:\AGI-lab")) / "data" / "fineweb"))
+
+
+# ======================================================================================
+# Config
+# ======================================================================================
+@dataclass
+class Config:
+    arch: str = "gpt2"
+    vocab_size: int = 50304          # GPT-2 BPE (50257) padded to a multiple of 64
+    n_layer: int = 12
+    n_head: int = 6
+    n_kv_head: int = 6               # = n_head for MHA; fewer for GQA
+    d_model: int = 384
+    d_ff: int = 1077                 # SwiGLU hidden size
+    seq_len: int = 1024
+    tie_embeddings: bool = True
+    rope_theta: float = 10000.0
+    sliding_window: int = 0          # 0 = full causal attention
+    # training
+    tokens: float = 50e6
+    batch_tokens: int = 32768        # tokens per optimizer step (micro-batches accumulate)
+    micro_batch: int = 4             # sequences per micro-batch (4 x 1024 = 4096 tokens); 8 spilled past 6 GB
+    lr: float = 0.02                 # Muon learning rate (matrix params)
+    lr_adam: float = 3e-3            # AdamW learning rate (embeddings, norms)
+    weight_decay: float = 0.1
+    warmup_frac: float = 0.02
+    cooldown_frac: float = 0.30
+    grad_clip: float = 1.0
+    lr_mult_both: float = 1.0        # scales both learning rates (the tuned-baseline duel uses it)
+    seed: int = 0
+    eval_tokens: int = 2_000_000
+    dtype: str = "bfloat16"
+
+
+# ======================================================================================
+# Model
+# ======================================================================================
+class RMSNorm(nn.Module):
+    def __init__(self, d: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(d))
+        self.eps = eps
+
+    def forward(self, x):
+        return F.rms_norm(x, (x.size(-1),), self.weight, self.eps)
+
+
+def rope_cache(seq_len: int, head_dim: int, theta: float, device) -> tuple[torch.Tensor, torch.Tensor]:
+    inv = 1.0 / (theta ** (torch.arange(0, head_dim, 2, device=device).float() / head_dim))
+    t = torch.arange(seq_len, device=device).float()
+    freqs = torch.outer(t, inv)                       # (T, D/2)
+    return freqs.cos(), freqs.sin()
+
+
+def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    # x: (B, H, T, D); rotate pairs (x1, x2) = (x[..., :D/2], x[..., D/2:])
+    d = x.size(-1) // 2
+    x1, x2 = x[..., :d], x[..., d:]
+    cos, sin = cos[: x.size(2)].to(x.dtype), sin[: x.size(2)].to(x.dtype)
+    return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+
+
+class Attention(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.n_head = cfg.n_head
+        self.hd = cfg.d_model // cfg.n_head
+        self.rd = 32
+        self.wq = nn.Linear(cfg.d_model, self.n_head * (self.hd + self.rd), bias=False)
+        self.compress = nn.Linear(cfg.d_model, 128, bias=False)
+        self.latent_norm = RMSNorm(128)
+        self.expand = nn.Linear(128, 2 * self.n_head * self.hd, bias=False)
+        self.rotary = nn.Linear(cfg.d_model, self.rd, bias=False)
+        self.q_norm, self.k_norm = RMSNorm(self.hd), RMSNorm(self.hd)
+        self.wo = nn.Linear(self.n_head * self.hd, cfg.d_model, bias=False)
+        self.window = cfg.sliding_window
+
+    def forward(self, x, cos, sin):
+        B, T, _ = x.shape
+        q = self.wq(x).view(B, T, self.n_head, self.hd + self.rd).transpose(1, 2)
+        qc, qr = q.split([self.hd, self.rd], dim=-1)
+        kv = self.expand(self.latent_norm(self.compress(x)))
+        k, v = kv.view(B, T, self.n_head, 2 * self.hd).transpose(1, 2).chunk(2, dim=-1)
+        kr = self.rotary(x).view(B, T, 1, self.rd).transpose(1, 2)
+        qr, kr = apply_rope(qr, cos, sin), apply_rope(kr, cos, sin)
+        q = torch.cat([self.q_norm(qc), qr], dim=-1)
+        k = torch.cat([self.k_norm(k), kr.expand(-1, self.n_head, -1, -1)], dim=-1)
+        if self.window and self.window < T:
+            i = torch.arange(T, device=x.device)
+            mask = (i[None, :] <= i[:, None]) & (i[:, None] - i[None, :] < self.window)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        else:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return self.wo(y.transpose(1, 2).reshape(B, T, -1))
+
+
+class MLP(nn.Module):
+    """SwiGLU feed-forward."""
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.w_gate = nn.Linear(cfg.d_model, cfg.d_ff, bias=False)
+        self.w_up = nn.Linear(cfg.d_model, cfg.d_ff, bias=False)
+        self.w_down = nn.Linear(cfg.d_ff, cfg.d_model, bias=False)
+
+    def forward(self, x):
+        return self.w_down(F.silu(self.w_gate(x)) * self.w_up(x))
+
+
+class Block(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.n1, self.n2 = RMSNorm(cfg.d_model), RMSNorm(cfg.d_model)
+        self.attn, self.mlp = Attention(cfg), MLP(cfg)
+        self.mix_logits = nn.Parameter(torch.eye(4).repeat(2, 1, 1) * 6.0)
+        self.read_logits = nn.Parameter(torch.zeros(2, 4))
+        self.write_logits = nn.Parameter(torch.tensor([[0.03, -0.01, -0.01, -0.01], [-0.01, 0.03, -0.01, -0.01]]))
+
+    def combine(self, x, branch, stage):
+        mixing = self.mix_logits[stage].float().exp()
+        for _ in range(20):
+            mixing = mixing / mixing.sum(dim=-1, keepdim=True)
+            mixing = mixing / mixing.sum(dim=-2, keepdim=True)
+        mixed = torch.einsum('ij,btjd->btid', mixing.to(x.dtype), x)
+        weights = 2 * self.write_logits[stage].sigmoid()
+        return mixed + branch.unsqueeze(2) * weights.to(x.dtype)[None, None, :, None]
+
+    def forward(self, x, cos, sin):
+        weights = self.read_logits[0].softmax(dim=-1).to(x.dtype)
+        branch = self.attn(self.n1((x * weights[None, None, :, None]).sum(2)), cos, sin)
+        x = self.combine(x, branch, 0)
+        weights = self.read_logits[1].softmax(dim=-1).to(x.dtype)
+        branch = self.mlp(self.n2((x * weights[None, None, :, None]).sum(2)))
+        return self.combine(x, branch, 1)
+
+
+class GPT(nn.Module):
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.cfg = cfg
+        self.tok = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
+        self.norm = RMSNorm(cfg.d_model)
+        self.head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
+        if cfg.tie_embeddings:
+            self.head.weight = self.tok.weight
+        self.apply(self._init)
+        for b in self.blocks:                              # scaled residual-branch init
+            nn.init.normal_(b.attn.wo.weight, std=0.02 / math.sqrt(2 * cfg.n_layer))
+            nn.init.normal_(b.mlp.w_down.weight, std=0.02 / math.sqrt(2 * cfg.n_layer))
+
+    @staticmethod
+    def _init(m):
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, std=0.02)
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        cos, sin = rope_cache(T, 32, self.cfg.rope_theta, idx.device)
+        x = self.tok(idx).unsqueeze(2).expand(-1, -1, 4, -1)
+        for b in self.blocks:
+            x = b(x, cos, sin)
+        logits = self.head(self.norm(x.mean(dim=2)))
+        if targets is None:
+            return logits, None
+        # logits stay in the autocast dtype; a float32 copy of (B*T, 50304) alone is 0.8 GB at B=4
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+        return logits, loss
+
+
+def param_counts(model: nn.Module) -> tuple[int, int]:
+    total = sum(p.numel() for p in model.parameters())
+    embed = model.tok.weight.numel()
+    return total, total - embed
+
+
+# ======================================================================================
+# Muon optimizer (Newton-Schulz orthogonalized momentum; Jordan et al. 2024)
+# ======================================================================================
+def newton_schulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    X = X / (X.norm() + 1e-7)
+    transposed = G.size(0) > G.size(1)
+    if transposed:
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        B_ = b * A + c * A @ A
+        X = a * X + B_ @ X
+    return (X.T if transposed else X).to(G.dtype)
+
+
+class Muon(torch.optim.Optimizer):
+    def __init__(self, params, lr=0.02, momentum=0.95, weight_decay=0.0, nesterov=True):
+        super().__init__(params, dict(lr=lr, momentum=momentum, weight_decay=weight_decay, nesterov=nesterov))
+
+    @torch.no_grad()
+    def step(self):
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                g = p.grad
+                st = self.state[p]
+                if "buf" not in st:
+                    st["buf"] = torch.zeros_like(g)
+                buf = st["buf"]
+                buf.mul_(group["momentum"]).add_(g)
+                g = g.add(buf, alpha=group["momentum"]) if group["nesterov"] else buf
+                u = newton_schulz5(g.reshape(g.size(0), -1)).view_as(g)
+                scale = max(1.0, g.size(0) / g.size(1)) ** 0.5     # shape-aware scaling
+                if group["weight_decay"]:
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
+                p.add_(u, alpha=-group["lr"] * scale)
+
+
+def build_optimizers(model: GPT, cfg: Config):
+    matrix = [p for n, p in model.named_parameters() if p.ndim == 2 and "tok" not in n and "head" not in n]
+    other = [p for n, p in model.named_parameters() if not (p.ndim == 2 and "tok" not in n and "head" not in n)]
+    return [Muon(matrix, lr=cfg.lr, weight_decay=cfg.weight_decay),
+            torch.optim.AdamW(other, lr=cfg.lr_adam, betas=(0.9, 0.95), weight_decay=cfg.weight_decay, eps=1e-10)]
+
+
+def lr_mult(step: int, total: int, cfg: Config) -> float:
+    warm = max(1, int(total * cfg.warmup_frac))
+    cool_start = int(total * (1 - cfg.cooldown_frac))
+    if step < warm:
+        return (step + 1) / warm
+    if step >= cool_start:
+        return max(0.0, (total - step) / max(1, total - cool_start))
+    return 1.0
+
+
+# ======================================================================================
+# Data
+# ======================================================================================
+class Shards:
+    def __init__(self, split: str, seq_len: int, seed: int):
+        files = sorted(DATA_DIR.glob("train_*.bin")) if split == "train" else [DATA_DIR / "val.bin"]
+        files = [f for f in files if f.exists()]
+        if not files and split == "train":
+            raise FileNotFoundError(f"no train shards in {DATA_DIR}; run nano/prepare_data.py")
+        # the validation split is normally absent from a training process: the harness runs the exam itself
+        self.data = [np.memmap(f, dtype=np.uint16, mode="r") for f in files]
+        self.seq_len = seq_len
+        self.rng = np.random.default_rng(seed)
+        self.pos = 0
+
+    def sample(self, n: int, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """Random windows (train) from a random shard."""
+        d = self.data[self.rng.integers(len(self.data))]
+        starts = self.rng.integers(0, len(d) - self.seq_len - 1, size=n)
+        x = np.stack([d[s: s + self.seq_len] for s in starts]).astype(np.int64)
+        y = np.stack([d[s + 1: s + self.seq_len + 1] for s in starts]).astype(np.int64)
+        return torch.from_numpy(x).to(device, non_blocking=True), torch.from_numpy(y).to(device, non_blocking=True)
+
+    def sequential(self, n: int, device):
+        """Fixed sequential windows (val) so every run evaluates the same tokens."""
+        if not self.data:
+            return None
+        d = self.data[0]
+        T = self.seq_len
+        out_x, out_y = [], []
+        for _ in range(n):
+            if self.pos + T + 1 > len(d):
+                return None
+            out_x.append(d[self.pos: self.pos + T].astype(np.int64))
+            out_y.append(d[self.pos + 1: self.pos + T + 1].astype(np.int64))
+            self.pos += T
+        return (torch.from_numpy(np.stack(out_x)).to(device), torch.from_numpy(np.stack(out_y)).to(device))
+
+
+@torch.no_grad()
+def evaluate(model: GPT, cfg: Config, device, dtype) -> float:
+    model.eval()
+    val = Shards("val", cfg.seq_len, cfg.seed)
+    n_batches = max(1, cfg.eval_tokens // (cfg.micro_batch * cfg.seq_len))
+    losses = []
+    for _ in range(n_batches):
+        batch = val.sequential(cfg.micro_batch, device)
+        if batch is None:
+            break
+        x, y = batch
+        with torch.autocast("cuda", dtype=dtype):
+            _, loss = model(x, y)
+        losses.append(loss.item())
+    model.train()
+    return float(np.mean(losses)) if losses else float("nan")
+
+
+# ======================================================================================
+# Train
+# ======================================================================================
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    for k, v in asdict(Config()).items():
+        ap.add_argument(f"--{k.replace('_', '-')}", type=type(v) if not isinstance(v, bool) else int, default=v)
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--build-only", action="store_true")
+    ap.add_argument("--smoke-steps", type=int, default=0)
+    ap.add_argument("--smoke-seconds", type=float, default=0.0)
+    args = ap.parse_args()
+    cfg = Config(**{k: getattr(args, k) for k in asdict(Config())})
+    cfg.tie_embeddings = bool(cfg.tie_embeddings)
+
+    torch.manual_seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if cfg.dtype == "bfloat16" else torch.float16
+    model = GPT(cfg).to(device)
+    total, nonembed = param_counts(model)
+    report = {"arch": cfg.arch, "seed": cfg.seed, "params_total": total, "params_nonembed": nonembed,
+              "config": asdict(cfg)}
+    print(f"[nano] params total {total/1e6:.2f}M, non-embedding {nonembed/1e6:.2f}M, device {device}", flush=True)
+    out = Path(args.out) if args.out else None
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
+
+    def write(extra: dict) -> None:
+        report.update(extra)
+        if out:
+            (out / "metrics.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+
+    if args.build_only:
+        write({"mode": "build"})
+        print(json.dumps({k: report[k] for k in ("params_total", "params_nonembed")}))
+        return 0
+
+    opts = build_optimizers(model, cfg)
+    train = Shards("train", cfg.seq_len, cfg.seed)
+    accum = max(1, cfg.batch_tokens // (cfg.micro_batch * cfg.seq_len))
+    total_steps = max(1, int(cfg.tokens // cfg.batch_tokens))
+    if args.smoke_steps:
+        total_steps = args.smoke_steps
+    torch.cuda.reset_peak_memory_stats() if device == "cuda" else None
+    t0 = time.time()
+    losses: list[float] = []
+    step = 0
+    model.train()
+    while step < total_steps:
+        m = lr_mult(step, total_steps, cfg)
+        for o in opts:
+            for g in o.param_groups:
+                g["lr"] = (cfg.lr if isinstance(o, Muon) else cfg.lr_adam) * m * cfg.lr_mult_both
+        loss_acc = 0.0
+        for _ in range(accum):
+            x, y = train.sample(cfg.micro_batch, device)
+            with torch.autocast("cuda", dtype=dtype):
+                _, loss = model(x, y)
+            (loss / accum).backward()
+            loss_acc += loss.item() / accum
+        if cfg.grad_clip:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
+        for o in opts:
+            o.step()
+        model.zero_grad(set_to_none=True)
+        losses.append(loss_acc)
+        step += 1
+        if step % 50 == 0 or step == 1:
+            el = time.time() - t0
+            print(f"[nano] step {step}/{total_steps} loss {loss_acc:.4f} lr x{m:.2f} "
+                  f"{step * cfg.batch_tokens / el / 1e3:.1f}k tok/s", flush=True)
+        if args.smoke_seconds and time.time() - t0 > args.smoke_seconds:
+            break
+    wall = time.time() - t0
+    peak = torch.cuda.max_memory_allocated() / 1e9 if device == "cuda" else 0.0
+    res = {"steps": step, "tokens": step * cfg.batch_tokens, "wall_s": round(wall, 1),
+           "peak_vram_gb": round(peak, 2), "tok_per_s": round(step * cfg.batch_tokens / max(wall, 1e-6)),
+           "loss_first": round(float(np.mean(losses[:5])), 4) if losses else None,
+           "loss_last": round(float(np.mean(losses[-5:])), 4) if losses else None,
+           "loss_curve": [round(float(l), 4) for l in losses]}   # per-step curve: matched-step comparisons
+    if args.smoke_steps or args.smoke_seconds:
+        res["mode"] = "smoke"
+        write(res)
+        print(json.dumps(res))
+        return 0
+    if out:                                   # the harness's exam (nano/exam.py) reads these weights
+        torch.save({"state_dict": model.state_dict(), "config": asdict(cfg)}, out / "model.pt")
+    val_loss = evaluate(model, cfg, device, dtype)   # a self-report; absent when the split is hidden
+    has_val = val_loss == val_loss
+    res.update({"mode": "full", "val_loss": round(val_loss, 4) if has_val else None,
+                "val_bpb": round(val_loss / math.log(2) * 0.2446, 4) if has_val else None})   # tokens/byte ~0.2446 for GPT-2 BPE on English web text (approx)
+    write(res)
+    print(json.dumps(res))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+```
+
+RESEARCH BRIEF for this part (sourced; every line has a URL):
+- KNOWN: Head-specific sigmoid gate on SDPA output (Gated Attention, Qwen): Multiply each head's SDPA output elementwise by sigmoid(X·Wθ), computed from the layer input, before the output projection. Effect: Across 30 variants, this gate gave consistent gains over the baseline. It also improved training stability, tolerated larger learning rates, cut massive activations and attention sinks, and improved long-context extrapolation. A blog write-up reports first-token attention falling from 46.7% to 4.8%; that figure is not from the paper. Qwen3-Next uses this gate. (15B MoE and 1.7B dense models, 3.5T tokens) https://arxiviq.substack.com/p/neurips-2025-gated-attention-for
+- KNOWN: Sparse per-head attention gate on 12 residual channels (modded-nanoGPT speedrun): Each head's output gets a sigmoid gate fed only by the first 12 dimensions of the residual stream, which is a very cheap gate. Effect: Part of the speedrun record sequence that cut the world-record time by about 20%. The write-up says it speeds up updates and reduces BOS attention-sink behavior. No isolated number was found. (GPT-2-small-scale speedrun, ~124M) https://www.greaterwrong.com/posts/j3gp8tebQiFJqzBgg/how-the-nanogpt-speedrun-wr-dropped-by-20-in-3-months
+- KNOWN: Value embeddings with per-head gate (speedrun and nanochat): Extra token embeddings are mixed into attention values, often on alternating layers. The nanochat variant gates them per head from the first 32 input channels with a 2·sigmoid range. Effect: Adopted as speedrun record 14 (4.41 min). No isolated loss delta found. (modded-nanoGPT and nanochat, ~124M and larger) https://github.com/KellerJordan/modded-nanogpt
+- KNOWN: Long-short sliding-window attention pattern: Alternate short-window and long-window layers, with window-size warmup and YaRN, instead of full context everywhere. Effect: Part of record 16 (3.80 min), together with a separate block mask. Gemma 3 uses 5:1 local-to-global with a 1024 window. A secondary summary says the ablation found only a slight perplexity cost. (modded-nanoGPT ~124M; Gemma 3 at large scale) https://sebastianraschka.com/llm-architecture-gallery/swa/
+- KNOWN: Value Residual Learning (ResFormer / SVFormer): Add a residual path from the first layer's value vectors to the values of every later layer. SVFormer shares the first layer's values across all layers. Effect: Matches baseline validation loss with about 16% fewer parameters and about 20% less data. SVFormer roughly halves the KV cache at a small cost. (Language models of roughly 82M to 1.6B parameters) https://arxiv.org/html/2410.17897v4
+- KNOWN: NormFormer HeadScale: Scale each head's output by a learned scalar, initialized at 1, before the output projection. Combined with extra norms to balance gradient magnitudes between early and late layers. Effect: The paper reports better pretraining quality with negligible parameters. The stated aim is to shrink early-layer gradients and raise late-layer gradients. (125M to 2.7B) https://arxiv.org/pdf/2110.09456
+- KNOWN: Grouped low-rank output projection (DeepSeek-V4): Split head outputs into groups, project each group to a smaller intermediate dimension, then combine and project to the hidden size. Effect: Reduces the cost of projecting a huge concatenated head output to d_model. This is a cost saving, not a loss gain. Group counts come from secondary sources (e.g. 128 heads, 16 groups, 1024 intermediate). (DeepSeek-V4 Pro scale) https://arxiv.org/pdf/2606.19348
+- KNOWN: MLA vs MHA vs GQA vs GTA/GLA at fixed query-head count: Compare KV-sharing schemes (MHA, GQA-4, MQA, GTA, MLA, GLA) with FFN width and 12 query heads held fixed. Effect: MLA had the best average perplexity (40.80), ahead of MHA (41.94) and GQA-4 (44.16), but at 181M parameters versus 174M for GQA-4, so it is not parameter-matched. (188M-parameter models) https://arxiv.org/pdf/2505.21487
+- KNOWN: Differential attention: Subtract two softmax attention maps to cancel common-mode noise and sparsify attention. Effect: Original paper claims gains across sizes and token counts. A follow-up at 125M reports about +0.7% average downstream accuracy for DIFF, with the top-half-of-layers variant slightly better than all layers. (125M (follow-up); original paper's range) https://arxiv.org/pdf/2508.18387
+- KNOWN: Talking-heads attention: Learned linear mixing across the head dimension of the attention logits, before and after the softmax. Effect: Better masked-LM perplexity and better transfer to downstream tasks, with modest extra compute. (T5-style models) https://arxiv.org/pdf/2003.02436
+- DID NOT HELP: Shrinking the QK dimension below head_dim 64: A Pythia-160M ablation found severe degradation when the query-key dimension was reduced below 64, even at fixed parameter budget. Very small heads are a bottleneck, which argues against many smaller heads. https://arxiv.org/pdf/2504.20938
+- DID NOT HELP: Changing head count at fixed hidden size (PanGu-π Pro): The authors report that head count and head dimension (they use 128) do not noticeably affect speed or accuracy when hidden size is fixed. This suggests head-split tuning may be near-neutral. https://arxiv.org/pdf/2402.02791
+- DID NOT HELP: Aggressive KV sharing via GQA-4 at small scale: At 188M, GQA-4 was clearly worse than MHA and MLA (average perplexity 44.16 versus 41.94 and 40.80). Plain KV-head reduction is not free, so it is a cost-saving move rather than a quality one. https://arxiv.org/pdf/2505.21487
+- OPEN: Test head-dimension sweeps (3×128, 12×32, 6×64) at 384 width with a latent-attention KV path. No controlled sweep for a latent-attention model of this size was found.: The evidence is mixed: tiny QK dimensions hurt, while 128 looks neutral or better. The penalty from small heads is said to shrink with model size, so results at 21M may not transfer. https://arxiv.org/pdf/2609.25802
+- OPEN: Combine a cheap sparse per-head gate on the SDPA output with the output projection, and check whether it removes the 10x layer-0 gradient imbalance.: The gate is known to reduce attention sinks and stabilize training, and HeadScale targets the early-layer gradient imbalance. Their interaction with QK-norm and four-stream residual mixing has not been reported. https://arxiv.org/pdf/2110.09456
+- OPEN: Per-layer heterogeneous windows with stochastic window sizes during training, rather than full context in every layer.: SWAX found that short windows mixed with global layers work best and that stochastic window sizing helps. That was tested with recurrent layers at 1.4B and 7B, not in a pure-attention small model. https://arxiv.org/pdf/2509.24552
+- OPEN: Grouped or low-rank output projection as a regularizer or capacity reallocation at small width, saving wo parameters for other uses.: DeepSeek-V4 uses it for efficiency at huge head counts. Nobody reported whether it costs or helps quality when the head output is only 384-dimensional. https://arxiv.org/pdf/2606.19348
+- OPEN: Apply differential or other noise-cancelling attention only to some layers (e.g. the top half), possibly paired with fewer, larger heads.: The 125M follow-up found the top-half-only variant slightly better than all layers, but it has not been tested with latent attention or at the 21M scale. https://arxiv.org/pdf/2508.18387
+
+HOW THE BASELINE BEHAVES (measured):
+# How the baseline behaves (100 steps, seed 0, measured 2026-10-15T00:58:27)
+
+- At step 100, loss by position: 0-64: 5.964, 64-256: 6.496, 256-1024: 6.423 (late minus early: +0.459 nats).
+- Loss by token frequency: rank 0-100: 3.163 (42% of tokens), rank 100-1000: 6.829 (21% of tokens), rank 1000-10000: 8.979 (26% of tokens), rank 10000-50304: 11.613 (12% of tokens); rarest minus most frequent: +8.450 nats.
+- Gradient norms by layer (attention): first 0.2406, last 0.0288, min at layer 2, max at layer 0; (MLP): first 0.1992, last 0.0508.
+- Attention entropy (1 = flat): layer values [0.957, 0.903, 0.854, 0.804, 0.771, 0.78, 0.698, 0.704, 0.705, 0.667, 0.711, 0.763]; lowest at layer 9 (0.667), highest at layer 0 (0.957).
+- Residual stream RMS after each block: first 1.403, last 10.893 (growth x7.8).
+- Probe loss fell from 10.8897 at step 0 to 6.4081 at step 100; the per-10-step improvement halved after step 10.
+- Recall tokens (bigram already seen in the window, 13% of targets): loss 4.475 against 6.704 for the rest.
+- Max attention logit by layer: [7.81, 15.5, 13.5, 18.12, 15.5, 16.0, 17.38, 19.75, 22.75, 20.12, 20.88, 16.62] (largest at layer 8); first-token attention mass: [0.0056, 0.0059, 0.0041, 0.0049, 0.0037, 0.0036, 0.0034, 0.0033, 0.0031, 0.0023, 0.0034, 0.0031].
+- Update size per step (||dw||/||w||): median 0.02009, max 0.03265 (spread x2).
+
+| layer | grad norm attn | grad norm mlp | output RMS | attention entropy |
+|---|---|---|---|---|
+| 0 | 0.2406 | 0.1992 | 1.403 | 0.957 |
+| 1 | 0.0236 | 0.1156 | 2.707 | 0.903 |
+| 2 | 0.0195 | 0.0895 | 3.985 | 0.854 |
+| 3 | 0.0222 | 0.0643 | 4.953 | 0.804 |
+| 4 | 0.021 | 0.0557 | 5.855 | 0.771 |
+| 5 | 0.0221 | 0.0484 | 6.659 | 0.78 |
+| 6 | 0.0276 | 0.0453 | 7.42 | 0.698 |
+| 7 | 0.0327 | 0.039 | 8.094 | 0.704 |
+| 8 | 0.0339 | 0.0407 | 8.758 | 0.705 |
+| 9 | 0.0338 | 0.0437 | 9.452 | 0.667 |
+| 10 | 0.0295 | 0.0413 | 10.074 | 0.711 |
+| 11 | 0.0288 | 0.0508 | 10.893 | 0.763 |
+
+loss curve: step 1: 10.8805, step 26: 7.0622, step 51: 6.5902, step 76: 6.4182, step 100: 6.1789
+
+
+ANOMALIES (replicated on several seeds):
+- grad attn in layer 0: 0.2908 is 0.2516 above what its two neighbours predict (extrapolated at the end of the range) (z 7.03, same sign on 3 seeds) [cell: grad]
+- grad mlp in layer 0: 0.2293 is 0.0718 above what its two neighbours predict (extrapolated at the end of the range) (z 5.78, same sign on 3 seeds) [cell: grad]
+- grad attn in layer 2: 0.0259 is 0.0039 below what its two neighbours predict (z -3.61, same sign on 3 seeds) [cell: grad]
+
+THE IDEA:
+IDEA: Short causal conv on keys and values before SDPA
+MECHANISM: Depthwise causal conv, kernel 4, on the expanded k and v right before the SDPA call, initialized to the identity tap so step 0 equals the baseline. Keys that already carry the previous three tokens let an induction pattern form inside one layer instead of needing a previous-token head in an earlier layer.
+PREDICTION: Faster drop in recall-token loss after step 300; step time up under 3 percent; parameters up by 36,864 total.
+TEST: 45 matched steps for curve parity, then a 1000-step run watching recall-token loss; 3-step timing. Kill if timing exceeds 5.0 s or the curve is above baseline at step 45.
+TARGET: recall-token loss, down
+VARIANTS OF THE SAME IDEA FROM OTHER CONTEXTS (choose the version you judge most likely to work):
+- Short causal conv on the latent before expansion: A depthwise causal conv of kernel 4 over time on the 128-dim latent, applied before the norm and expansion, makes each key and value describe a 4-token local context instead of one token, which lets the attention head match on short phrases and frees the softmax from spending heads on adjacent-token lookups. It inverts assumption 3 (compression is worth paying for only as a cache) by using the narrow latent as the cheap place for temporal mixing: the conv costs 128x4 parameters per layer there versus 768x4 after expansion.
+- Latent token shift: Anomaly row restated: attention gradient in layer 0 is ten times that of layers 1-11 on all three seeds. Three rivals: the layer-0 branch writes into a residual of RMS 1.4 versus 10.9 at the end, so the loss is most sensitive there; layer 0 is the only layer whose keys are built from raw token embeddings, so it alone carries the prev-token and bigram job that dominates early training; a measurement artifact, one micro-batch before clipping, where the compress and rotary matrices acting on near-one-hot normed embeddings inherit batch token composition and a 20-batch average would shrink the cel
+
+Ask yourself as many questions as it takes to cover EVERY aspect of it (at least 6, no upper limit): the exact mechanism in terms of the script above, how it interacts with each other part of the recipe, compute, memory and step time, parameters and initialisation, what it silently assumes, how it could fail or do nothing, and what is already known about it. First write the chain of links from the change to the loss, each with what would refute it; then the questions, aimed at the weakest links; answer each. Then list what the builder must know, what the idea assumes, the new ideas that came up while answering, and the questions you could not answer.
+
+Use exactly this form:
+CHAIN (the causal path from the change to the loss, 3 to 6 links, one per line; this is what gets tested, so write what could be measured; directions and bands, never point estimates):
+L1: <cause> -> <effect> | quantity: <the measured cell or quantity this link moves> | baseline: <its value in the measurements above, or "unmeasured"> | expect: <direction and rough band> | breaks if: <the observation that would refute this link>
+L2: ...
+WEAKEST: <the link id you are least sure of>
+
+QUESTIONS, aimed at the weakest links first. Ask only questions whose answer would change how the idea is built, and say which two build choices each one decides:
+Q1: <question> | decides: <choice A vs choice B>
+A1: <answer, one to three sentences, facts not hopes; write "unknown" when you do not know; put the URL in the answer when a fact comes from the web>
+Q2: ...
+A2: ...
+(as many pairs as needed, at least 6)
+
+KNOWN:
+- <one fact per line that whoever builds this must know: sizes, orderings, where it plugs in, what to initialise, what to watch; a fact with a number must end with its source URL> [script|measured|web|belief]
+(tag every fact with where it comes from: script = read from the script above; measured = from the measurements above; web = from a page, with its URL; belief = your own reasoning, not yet checked)
+
+ASSUMES:
+- <one line per thing this idea silently takes for granted (a design choice a different idea could drop)>
+
+NEW IDEAS (4 to 6, each in this block form, blank line between blocks, one per slot in this order: DROP one of the ASSUMES lines and build what follows; STRENGTHEN the mechanism; SPECIALISE it to fewer layers, one token class or one phase of training; PORT it to another part, naming the part; COMBINE it with a named known technique; and at least one must be a leap. Each must differ in mechanism from the idea under interrogation):
+SLOT: <drop|strengthen|specialise|port|combine|other>
+IDEA: <short name>
+MECHANISM: <one or two sentences>
+PREDICTION: <the observable effect>
+TEST: <the cheapest falsifying check>
+SOURCE: <"own" or a URL>
+PART: <the part of the map this idea belongs to, by its name: the part under interrogation unless the idea is for another part>
+KIND: <"port" or "leap"; at least one of the new ideas must be a leap: it drops or flips a rule the recipe takes for granted, keeps the rest, and might fail>
+BREAKS: <leaps only: the rule it drops or flips>
+KILL: <leaps only: the number at the first learning check that discards it>
+
+OPEN:
+- <one unanswered question per line> | build: <yes if the answer would change how this is built, else no> | decides: <the two build choices it would separate>
